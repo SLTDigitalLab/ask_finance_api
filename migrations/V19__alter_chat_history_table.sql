@@ -1,0 +1,3 @@
+ALTER TABLE chat_history 
+    ADD COLUMN file VARCHAR(255),
+    ADD COLUMN page INTEGER;

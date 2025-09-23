@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS usage_cost (
+  uuid uuid PRIMARY KEY,
+  phase VARCHAR(255) NOT NULL,
+  type VARCHAR(255) NOT NULL,
+  token_count INTEGER,
+  cost DECIMAL(100,5),
+  chat_id VARCHAR(255),
+  latency INTEGER,
+  timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

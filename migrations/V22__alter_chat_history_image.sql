@@ -1,0 +1,1 @@
+ALTER TABLE chat_history ADD COLUMN image VARCHAR(255);

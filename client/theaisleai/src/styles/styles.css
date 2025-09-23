@@ -1,0 +1,30 @@
+.select-container-one {
+    width: 450px; /* Set a maximum width for individual select components */
+    padding: 15px;
+    margin: 0 5px; /* Optional: Add some spacing between select boxes */
+}
+
+.select-container-two {
+    width: 450px; /* Set a maximum width for individual select components */
+    margin: 0 5px; /* Optional: Add some spacing between select boxes */
+    padding: 15px;
+}
+
+html, body {
+    height: 100%; 
+  }
+  
+  #root, /* Or the ID of your main application container */
+  .chakra-container, /* Or the class of Chakra's main container */
+  body > .chakra-container { /* Or a more specific selector if needed */
+    min-height: 60vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .activeLink {
+    background-color: #457b9d; 
+    color: white;
+    padding: 10px;
+    border-radius: 15px;
+  }

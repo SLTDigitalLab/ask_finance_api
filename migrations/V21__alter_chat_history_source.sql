@@ -1,0 +1,2 @@
+ALTER TABLE chat_history DROP COLUMN page;
+ALTER TABLE chat_history ADD COLUMN page VARCHAR(255);

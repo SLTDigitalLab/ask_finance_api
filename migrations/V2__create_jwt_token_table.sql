@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS jwt_token (
+        id SERIAL PRIMARY KEY,
+        token TEXT NOT NULL,
+        user_id VARCHAR(255) NOT NULL,
+        deactivated BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+);

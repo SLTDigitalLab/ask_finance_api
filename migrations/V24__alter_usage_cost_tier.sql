@@ -1,0 +1,2 @@
+ALTER TABLE usage_cost
+    ADD COLUMN tier VARCHAR(255) NOT NULL DEFAULT 'tier';

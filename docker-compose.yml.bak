@@ -1,0 +1,84 @@
+version: '3.3'
+name: ekb-api
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: db
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - TZ=Asia/Colombo
+      - PGTZ=Asia/Colombo
+    # ports:
+    #   - 5432:5432
+    volumes: 
+      - db:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/create_tables.sql
+    networks:
+      - net
+
+  migrations:
+    build: migrations
+    container_name: migrations
+    command: -connectRetries=20 migrate
+    environment:
+      FLYWAY_USER: 'postgres'
+      FLYWAY_MIXED: 'true'
+      FLYWAY_PASSWORD: 'postgres'
+      FLYWAY_URL: 'jdbc:postgresql://db:5432/postgres'
+    networks:
+      - net
+
+  api:
+    build: .
+    container_name: api
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - vector-db
+      - migrations
+      - db
+    volumes:
+      - ./:/src
+      - ./scheduled_documents:/scheduled_documents
+      - /home/user/stores/pdf_dir/:/build/app/stores/pdf_dir/
+      - /home/user/stores/images/:/build/app/stores/images/
+
+    links:
+      - db
+      - vector-db
+      - migrations
+    shm_size: 2g
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: postgres
+    networks:
+      - net
+
+  vector-db:
+    image: qdrant/qdrant
+    container_name: vector-db
+    restart: always
+    # ports:
+    #   - 6333:6333
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    networks:
+      - net
+
+volumes:
+  db:
+    driver: local
+
+networks:
+  net:
+    driver: bridge

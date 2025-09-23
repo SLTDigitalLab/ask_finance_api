@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS chat_history (
+    id SERIAL PRIMARY KEY,
+    chat_id VARCHAR(255),
+    user_id VARCHAR(255),
+    role VARCHAR(255), 
+    message TEXT,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP 
+);
