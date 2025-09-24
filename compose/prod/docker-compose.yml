@@ -1,9 +1,9 @@
 version: '3.3'
-name: ekb-api
+name: askfinance-api
 services:
   db:
     image: postgres:15-alpine
-    container_name: db
+    container_name: askfinance-db
     restart: always
     environment:
       - POSTGRES_USER=postgres
@@ -19,7 +19,7 @@ services:
 
   migrations:
     build: migrations
-    container_name: migrations
+    container_name: askfinance-migrations
     command: -connectRetries=20 migrate
     environment:
       FLYWAY_USER: 'postgres'
@@ -31,12 +31,12 @@ services:
 
   api:
     build: .
-    container_name: api
+    container_name: askfinance-api
     restart: always
     ports:
       - "8000:8000"
     depends_on:
-      - vector-db
+      - db
       - migrations
       - db
     volumes:
@@ -60,7 +60,7 @@ services:
 
   vector-db:
     image: qdrant/qdrant
-    container_name: vector-db
+    container_name: askfinance-vector-db
     restart: always
     ports:
       - 6333:6333
@@ -72,7 +72,7 @@ services:
 
   client:
     image: nginx:latest
-    container_name: client
+    container_name: askfinance-client
     restart: always
     ports:
       - "8080:80"
