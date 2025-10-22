@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.v1.chat.base import router as multi_agent_router
 from api.v1.chat.document_agent import router as document_router
 
-app = FastAPI(title="ASK HR Agent")
+app = FastAPI(title="ASK Finance Agent")
 Instrumentator().instrument(app).expose(app)
 
 

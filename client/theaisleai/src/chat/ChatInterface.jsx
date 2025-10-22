@@ -1,29 +1,16 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import Select from "react-select";
 import {
   Box,
   Button,
-  Container,
-  Card,
-  CardBody,
   Drawer,
   Flex,
-  Heading,
   Image,
   Input,
-  Grid,
   Text,
   useToast,
   VStack,
   HStack,
   useColorModeValue,
-  Switch,
-  SimpleGrid,
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-  PopoverBody,
-  PopoverArrow,
   useDisclosure,
   DrawerOverlay,
   DrawerContent,
@@ -38,28 +25,10 @@ import { useDispatch, useSelector } from "react-redux";
 import { NavLink, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { v4 as uuidv4 } from "uuid";
-import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutline";
 import FaceIcon from "@mui/icons-material/Face";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
-import RemoveCircleOutlineIcon from "@mui/icons-material/RemoveCircleOutline";
 import SendIcon from "@mui/icons-material/Send";
 import { CHAT } from "../urls";
-import PublicIcon from "@mui/icons-material/Public";
-import PublicOffIcon from "@mui/icons-material/PublicOff";
-import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
-// import MicrophoneButton from "../components/MicrophoneButton";
-import KeyboardVoiceIcon from "@mui/icons-material/KeyboardVoice";
-import MicOffIcon from "@mui/icons-material/MicOff";
-import FileUploadIcon from "@mui/icons-material/FileUpload";
-import KeyIcon from "@mui/icons-material/Key";
-import TextSnippetIcon from "@mui/icons-material/TextSnippet";
-import NotesIcon from "@mui/icons-material/Notes";
-import LanguageIcon from "@mui/icons-material/Language";
-import MemoryIcon from "@mui/icons-material/Memory";
-import DeleteIcon from "@mui/icons-material/Delete";
-import ChatIcon from "@mui/icons-material/Chat";
-import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
-import QuizOutlinedIcon from "@mui/icons-material/QuizOutlined";
 import { keyframes } from "@emotion/react";
 
 const spin = keyframes`
@@ -67,41 +36,6 @@ const spin = keyframes`
   100% { transform: rotate(360deg); }
 `;
 
-// Custom styles for react-select dropdown
-const customStyles = (isDarkMode) => ({
-  control: (provided) => ({
-    ...provided,
-    backgroundColor: isDarkMode ? "#2D3748" : "white",
-    borderColor: isDarkMode ? "#4A5568" : "#E2E8F0",
-    color: isDarkMode ? "white" : "black",
-  }),
-  option: (provided, state) => ({
-    ...provided,
-    backgroundColor: state.isFocused
-      ? isDarkMode
-        ? "#4A5568"
-        : "#EDF2F7"
-      : isDarkMode
-      ? "#2D3748"
-      : "white",
-    color: isDarkMode ? "white" : "black",
-    "&:hover": {
-      backgroundColor: isDarkMode ? "#4A5568" : "#EDF2F7",
-    },
-  }),
-  menu: (provided) => ({
-    ...provided,
-    backgroundColor: isDarkMode ? "#2D3748" : "white",
-  }),
-  singleValue: (provided) => ({
-    ...provided,
-    color: isDarkMode ? "white" : "black",
-  }),
-  input: (provided) => ({
-    ...provided,
-    color: isDarkMode ? "white" : "black",
-  }),
-});
 
 function ChatInterface() {
   const { colorMode } = useColorMode();
@@ -130,48 +64,6 @@ function ChatInterface() {
   const [page, setPage] = useState(0);
   const [refHeader, setRefHeader] = useState("");
   const btnRef = React.useRef();
-  const isSubmitAndRecordEnabled = apiKey != null;
-
-  const modeOptions = [
-    { value: "short", label: "Short" },
-    { value: "long", label: "Long" },
-  ];
-
-  const toggleCacheMode = () => {
-    setIsGlobalCache((prevMode) => !prevMode);
-    // Optionally, inform backend about cache mode here
-  };
-
-  // Fetch header for history
-  const fetchHeader = async (question, reply) => {
-    const msg = [question, reply];
-    try {
-      const hist_header = await axios.post(
-        CHAT.CHAT_HEADER,
-        {
-          chat_id: chatSessionId,
-          collection_id: selectedCollectionIds,
-          messages: msg,
-        },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      setChatHeader(hist_header.data.result.response);
-      return hist_header.data.result.response;
-    } catch (error) {
-      console.error("Error fetching chat header:", error);
-    }
-  };
-
-  const ensureSessionId = () => {
-    if (!chatSessionId) {
-      const newSessionId = uuidv4();
-      setChatSessionId(newSessionId);
-      return newSessionId;
-    }
-    return chatSessionId;
-  };
 
   const FRONTEND_TOKEN = "lYrCN/UOC8c+e7CveLp1awTcoUJG8wGDYw5IaK5wf+w=";
 
@@ -233,62 +125,7 @@ function ChatInterface() {
     }
   };
 
-  const handleDeleteCache = () => {
-    const token = localStorage.getItem("authToken");
-    axios
-      .delete(CHAT.DELETE_LOCAL_CACHE, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-      .then((response) => {
-        if (response.data.msg === "Local cache deleted successfully") {
-          toast({
-            title: response.data.msg,
-            status: "success",
-            duration: 3000,
-            isClosable: true,
-          });
-        } else {
-          toast({
-            title: response.data.msg,
-            status: "error",
-            duration: 3000,
-            isClosable: true,
-          });
-        }
-      })
-      .catch((error) => {
-        console.error("Error occured during cache clearing - ", error);
-        toast({
-          title: "Error Deleting Cache",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
-        });
-      });
-  };
-
-  const loadPdf = async (file, page) => {
-    try {
-      const response = await axios.get(`${CHAT.GET_PDF}/${file}`, {
-        responseType: "blob",
-      });
-      if (response.status === 200) {
-        const pdfUrl = URL.createObjectURL(response.data);
-        setPdf(pdfUrl);
-        setRefHeader(file);
-        setPage(page);
-      } else {
-        console.error("Error fetching PDF:", response.data);
-        setPdf(null);
-      }
-    } catch (error) {
-      console.error("Error fetching PDF file:", error);
-      setPdf(null);
-    }
-  };
-
+ 
   return (
     <Flex h="80vh" w="100%" justify="center" align="center">
       {/* Centered main container, same width as before (85%) */}
