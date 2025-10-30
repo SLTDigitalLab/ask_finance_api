@@ -1,5 +1,5 @@
-export const BASE_URL = "http://localhost:8000/"
-// export const BASE_URL = "https://askhr.sltdigitallab.lk/"
+// export const BASE_URL = "http://localhost:8000/"
+export const BASE_URL = "https://askhr.sltdigitallab.lk/"
 
 export const CHAT = {
     CHAT_API_URL: BASE_URL + "api/v1/chat/vector_multi",
