@@ -11,10 +11,8 @@ from urllib.parse import urljoin, urlparse
 import trafilatura
 from readability import Document
 from db.psql_connector import DB, default_config
-from typing import Optional, List, Dict
 from api.v1.chat.vectorstore import *
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain_core.tools import tool
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .app_types import AgentState
 from .auth import verify_token, token_manager 
@@ -22,7 +20,6 @@ import pdfplumber
 import docx
 import io
 import requests
-from fastapi import Query
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
@@ -48,10 +45,9 @@ security = HTTPBearer()
 class ChatRequest(BaseModel):
     query: str
     answer: str = ""
-    collection_id: Optional[List[str]] = None
+    domain: str = "default"
     chat_mode: str = "short"
     cache_mode: bool = False
-    collection_mode: bool = False
 
 class ChatResponse(BaseModel):
     answer: str
@@ -60,19 +56,28 @@ class ChatResponse(BaseModel):
     images: List[str] = []
     chat_id: str
     reasoning_chain: List[str] = []
+    domain: str 
 
-class CollectionResponse(BaseModel):
-    collection_id: str
+class DomainRequest(BaseModel):
+    domain: str
+    description: Optional[str] = None
+
+class DomainResponse(BaseModel):
+    domain: str
     collection_name: str
+    status: str
+    points_count: Optional[int] = None
 
 class HRKBRequest(BaseModel):
     folder_id: str
-    token: str  # Graph API access token
+    token: str
+    domain: str = "hr"
     chunk_size: Optional[int] = 1000
     chunk_overlap: Optional[int] = 200
 
 class LinkRequest(BaseModel):
     urls: List[HttpUrl]
+    domain: str  # Added domain field
     chunk_size: Optional[int] = 1000
     chunk_overlap: Optional[int] = 200
 
@@ -80,7 +85,7 @@ class LinkResponse(BaseModel):
     success: bool
     message: str
     document_id: str
-    collection_id: str
+    domain: str  # Added domain field
     title: str
     content_length: int
     chunks_created: int
@@ -90,7 +95,7 @@ class LinkResponse(BaseModel):
 
 class BulkLinkRequest(BaseModel):
     urls: List[HttpUrl]
-    collection_id: str
+    domain: str  # Added domain field
     chunk_size: Optional[int] = 1000
     chunk_overlap: Optional[int] = 200
     extract_images: Optional[bool] = False
@@ -102,17 +107,11 @@ class BulkLinkResponse(BaseModel):
     failed: int
     results: List[LinkResponse]
     errors: List[str] = []
+    domain: str  # Added domain field
 
 chat_sessions: Dict[str, Dict] = {}
 document_collections: Dict[str, Dict] = {}
-# vector_stores: Dict[str, FAISS] = {}
 collection_documents: Dict[str, List[Dict]] = {}
-
-# try:
-#     embeddings = OpenAIEmbeddings()
-# except Exception as e:
-#     logger.error(f"Failed to initialize OpenAI embeddings: {e}")
-#     embeddings = None
 
 search_tool = TavilySearchResults()
 
@@ -135,20 +134,20 @@ def parse_text(file_bytes: bytes) -> str:
     """Default handler for txt/md/json/etc."""
     return file_bytes.decode("utf-8", errors="ignore")
 
-def save_chat_to_db(chat_id: str, role: str, message: str):
-    """Save chat message to database."""
+def save_chat_to_db(chat_id: str, role: str, message: str, domain: str = "default"):
+    """Save chat message to database with domain."""
     db = None
     try:
         db = DB(default_config())
         cursor = db.conn.cursor()
 
-        logger.info(f"Saving {role} message to DB: chat_id={chat_id}")
+        logger.info(f"Saving {role} message to DB: chat_id={chat_id}, domain={domain}")
 
         insert_query = """
-        INSERT INTO virtual_kandy_chat_history_new (chat_id, role, message, timestamp)
-        VALUES (%s, %s, %s, NOW())
+        INSERT INTO virtual_kandy_chat_history_new (chat_id, role, message, domain, timestamp)
+        VALUES (%s, %s, %s, %s, NOW())
         """
-        cursor.execute(insert_query, (chat_id, role, message))
+        cursor.execute(insert_query, (chat_id, role, message, domain))
         db.conn.commit()
         
     except Exception as e:
@@ -160,19 +159,28 @@ def save_chat_to_db(chat_id: str, role: str, message: str):
             except:
                 pass
 
-def get_chat_history(chat_id: str):
-    """Get chat history from database."""
+def get_chat_history(chat_id: str, domain: Optional[str] = None):
+    """Get chat history from database, optionally filtered by domain."""
     db = None
     try:
         db = DB(default_config())
         cursor = db.conn.cursor()
         
-        query = """
-        SELECT role, message FROM virtual_kandy_chat_history_new
-        WHERE chat_id = %s
-        ORDER BY timestamp ASC
-        """
-        cursor.execute(query, (chat_id,))
+        if domain:
+            query = """
+            SELECT role, message FROM virtual_kandy_chat_history_new
+            WHERE chat_id = %s AND domain = %s
+            ORDER BY timestamp ASC
+            """
+            cursor.execute(query, (chat_id, domain))
+        else:
+            query = """
+            SELECT role, message FROM virtual_kandy_chat_history_new
+            WHERE chat_id = %s
+            ORDER BY timestamp ASC
+            """
+            cursor.execute(query, (chat_id,))
+        
         result = cursor.fetchall()
         
         history = []
@@ -193,35 +201,6 @@ def get_chat_history(chat_id: str):
                 db.close()
             except:
                 pass
-
-def test_database_connection():
-    """Test database connection and methods."""
-    try:
-        db = DB(default_config())
-        cursor = db.conn.cursor()
-        
-        # Test basic query
-        cursor.execute("SELECT 1 as test")
-        result = cursor.fetchone()
-        logger.info(f"Database connection test successful: {result}")
-        
-        # Test collection table
-        cursor.execute("SELECT COUNT(*) FROM collection")
-        count = cursor.fetchone()[0]
-        logger.info(f"Collection table has {count} records")
-        
-        # Test documents table  
-        cursor.execute("SELECT COUNT(*) FROM documents")
-        doc_count = cursor.fetchone()[0]
-        logger.info(f"Documents table has {doc_count} records")
-        
-        db.close()
-        return True
-        
-    except Exception as e:
-        logger.error(f"Database connection test failed: {e}")
-        return False
-
 
 async def fetch_page_content(session: aiohttp.ClientSession, url: str) -> tuple[str, Dict]:
     """Fetch and extract content from a web page."""
@@ -290,7 +269,6 @@ async def fetch_page_content(session: aiohttp.ClientSession, url: str) -> tuple[
             if not content:
                 raise HTTPException(status_code=400, detail="Failed to extract content from the webpage")
             
-            # Additional metadata
             metadata.update({
                 'url': str(url),
                 'title': title,
@@ -306,7 +284,6 @@ async def fetch_page_content(session: aiohttp.ClientSession, url: str) -> tuple[
     except Exception as e:
         logger.error(f"Error processing {url}: {e}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
-    
 
 async def fetch_onedrive_folder_docs(folder_id: str, token: str):
     """Fetch all files in a OneDrive folder and extract their text."""
@@ -319,14 +296,13 @@ async def fetch_onedrive_folder_docs(folder_id: str, token: str):
 
     docs = []
     for item in items:
-        if "@microsoft.graph.downloadUrl" in item:  # Skip folders
+        if "@microsoft.graph.downloadUrl" in item:
             download_url = item["@microsoft.graph.downloadUrl"]
             file_resp = requests.get(download_url)
             file_resp.raise_for_status()
             file_bytes = file_resp.content
             name = item["name"].lower()
 
-            # Detect file type
             if name.endswith(".docx"):
                 file_text = parse_docx(file_bytes)
             elif name.endswith(".pdf"):
@@ -345,37 +321,6 @@ async def fetch_onedrive_folder_docs(folder_id: str, token: str):
                 })
     return docs
 
-
-def extract_images_and_links(html_content: str, base_url: str) -> tuple[List[str], List[str]]:
-    """Extract images and links from HTML content."""
-    try:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Extract images
-        images = []
-        for img in soup.find_all('img', src=True):
-            img_url = urljoin(base_url, img['src'])
-            if img_url not in images:
-                images.append(img_url)
-        
-        # Extract internal links
-        internal_links = []
-        base_domain = urlparse(base_url).netloc
-        
-        for link in soup.find_all('a', href=True):
-            link_url = urljoin(base_url, link['href'])
-            link_domain = urlparse(link_url).netloc
-            
-            # Only include internal links
-            if link_domain == base_domain and link_url not in internal_links:
-                internal_links.append(link_url)
-        
-        return images, internal_links
-        
-    except Exception as e:
-        logger.error(f"Error extracting images and links: {e}")
-        return [], []
-
 def chunk_content(content: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
     """Split content into chunks for processing."""
     text_splitter = RecursiveCharacterTextSplitter(
@@ -387,13 +332,91 @@ def chunk_content(content: str, chunk_size: int = 1000, chunk_overlap: int = 200
     chunks = text_splitter.split_text(content)
     return chunks
 
+@router.post("/domains/create", tags=["Domains"], response_model=DomainResponse)
+async def create_domain(
+    request: DomainRequest,
+    token: str = Depends(token_manager.verify_admin_token)
+):
+    """Create a new domain collection."""
+    try:
+        status = create_collection(domain=request.domain)
+        stats = get_domain_stats(request.domain)
+        
+        return DomainResponse(
+            domain=request.domain,
+            collection_name=stats.get("collection_name", ""),
+            status=status,
+            points_count=stats.get("points_count", 0)
+        )
+    except Exception as e:
+        logger.error(f"Error creating domain: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/domains", tags=["Domains"])
+async def list_domains(
+    token: str = Depends(verify_token)
+):
+    """List all available domains."""
+    try:
+        collections = get_all_collections()
+        
+        domain_info = []
+        for col in collections:
+            stats = get_domain_stats(col["domain"])
+            domain_info.append({
+                "domain": col["domain"],
+                "collection_name": col["collection_name"],
+                "points_count": stats.get("points_count", 0),
+                "status": stats.get("status", "unknown")
+            })
+        
+        return {
+            "domains": domain_info,
+            "total_count": len(domain_info)
+        }
+    except Exception as e:
+        logger.error(f"Error listing domains: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/domains/{domain}/stats", tags=["Domains"])
+async def get_domain_statistics(
+    domain: str,
+    token: str = Depends(verify_token)
+):
+    """Get statistics for a specific domain."""
+    try:
+        stats = get_domain_stats(domain)
+        if not stats.get("exists"):
+            raise HTTPException(status_code=404, detail=f"Domain '{domain}' not found")
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting domain stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/domains/{domain}", tags=["Domains"])
+async def delete_domain(
+    domain: str,
+    token: str = Depends(token_manager.verify_admin_token)
+):
+    """Delete a domain and its collection."""
+    try:
+        delete_collection(domain=domain)
+        return {
+            "status": "success",
+            "message": f"Domain '{domain}' deleted successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error deleting domain: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/add_data", tags=["Vectorstore"])
 async def add_data_to_collection(
     request: LinkRequest,
-    api_secret = os.getenv("ADMIN_TOKEN")
-    ):
-    result = {"status":"", "message":""}
+):
+    """Add web content to a specific domain."""
+    result = {"status": "", "message": "", "domain": request.domain}
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -404,35 +427,33 @@ async def add_data_to_collection(
 
             chunks = chunk_content(contents, request.chunk_size, request.chunk_overlap)
 
-            logger.info(f"Successfully processed link {request.urls} into {len(chunks)} chunks")
+            logger.info(f"Successfully processed {len(request.urls)} links into {len(chunks)} chunks for domain '{request.domain}'")
 
-            upsert_result = add_texts(chunks)
+            upsert_result = add_texts(chunks, domain=request.domain)
 
             result["status"] = "success"
-            result["message"] = str(upsert_result["status"])
+            result["message"] = f"Added {len(chunks)} chunks to domain '{request.domain}'"
 
             return result
 
     except Exception as e:
-        logger.error(f"Error processing link {request.url}: {e}")
+        logger.error(f"Error processing links for domain '{request.domain}': {e}")
         result["status"] = "failed"
         result["message"] = str(e)
         return result
 
 @router.post("/add_hr_kb", tags=["Vectorstore"])
-async def add_hr_kb_to_collection(request: HRKBRequest):
-    """
-    Add documents from a OneDrive folder into the vector store.
-    Works similar to /add_data, but sources from OneDrive.
-    """
-    result = {"status": "", "message": ""}
+async def add_hr_kb_to_collection(
+    request: HRKBRequest,
+):
+    """Add OneDrive documents to a specific domain."""
+    result = {"status": "", "message": "", "domain": request.domain}
 
     try:
-        # Fetch all docs in the OneDrive folder
         docs = await fetch_onedrive_folder_docs(request.folder_id, request.token)
         
         if not docs:
-            return {"status": "failed", "message": "No documents found in OneDrive folder"}
+            return {"status": "failed", "message": "No documents found in OneDrive folder", "domain": request.domain}
 
         all_chunks = []
         for doc in docs:
@@ -440,71 +461,58 @@ async def add_hr_kb_to_collection(request: HRKBRequest):
             all_chunks.extend(chunks)
             logger.info(f"Processed OneDrive file {doc['name']} into {len(chunks)} chunks")
 
-        # Upsert into vector store
-        upsert_result = add_texts(all_chunks)
+        upsert_result = add_texts(all_chunks, domain=request.domain)
 
         result["status"] = "success"
-        result["message"] = f"Inserted {len(all_chunks)} chunks from {len(docs)} OneDrive docs"
+        result["message"] = f"Inserted {len(all_chunks)} chunks from {len(docs)} OneDrive docs to domain '{request.domain}'"
         return result
 
     except Exception as e:
-        logger.error(f"Error processing OneDrive folder {request.folder_id}: {e}")
+        logger.error(f"Error processing OneDrive folder for domain '{request.domain}': {e}")
         result["status"] = "failed"
         result["message"] = str(e)
         return result
 
-@router.get("/collections", tags=["Vectorstore"])
-async def list_collections(
-    api_secret = os.getenv("API_SECRET_TOKEN")
+@router.get("/chunks/{domain}", tags=["Vectorstore"])
+async def list_domain_chunks(
+    domain: str,
+    token: str = Depends(verify_token)
 ):
-    """Get all available collections from the database."""
-    collection = get_all_collections()
-    return {
-        "collections": collection,
-        "total_count": len(collection)
-    }
-
-
-
-@router.get("/chunks", tags=["Vectorstore"])
-async def list_collections(
-    api_secret = os.getenv("API_SECRET_TOKEN")
-):
-    """Get all available chunks in the collection."""
-    chunks = get_all_points()
-    return {
-        "chunks": chunks,
-        "total_count": len(chunks)
-    }
-
-
-
-@router.delete("/delete", tags=["Vectorstore"])
-async def drop_collection(
-    api_secret = os.getenv("ADMIN_TOKEN")
-):
-    """Delete all available chunks in the collection."""
+    """Get all chunks in a specific domain."""
     try:
-        delete_collection()
+        chunks = get_all_points(domain=domain)
         return {
-            "status": "success"
+            "domain": domain,
+            "chunks": chunks,
+            "total_count": len(chunks)
         }
     except Exception as e:
-        return {
-            "status": "failed"
-        }
+        logger.error(f"Error listing chunks for domain '{domain}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 def document_search_agent(state: AgentState) -> AgentState:
-    """Enhanced document search agent with centralized destination memory."""
+    """Enhanced document search agent with domain support."""
     query = state["query"]
+    domain = state.get("collection_id")
+
+    if domain is None:
+        logger.error(f"[DOCUMENT_AGENT] collection_id is None! State keys: {state.keys()}")
+        logger.error(f"[DOCUMENT_AGENT] Full state: {state}")
+        domain = "default"
+    
     chat_id = state.get("chat_id")
 
-    # Run similarity search
-    docs = search_similar(query)
+    logger.info(f"[DOCUMENT_AGENT] Searching in domain '{domain}' for query: {query}")
+    logger.info(f"[DOCUMENT_AGENT] Full state collection_id: {state.get('collection_id')}")
+
+    docs = search_similar(query, domain=domain)
+    
+    logger.info(f"[DOCUMENT_AGENT] Found {len(docs)} documents in domain '{domain}'")
 
     if not docs:
         state["document_found"] = False
-        state["reasoning_chain"].append("Document Search Agent: No documents found in vector store")
+        state["reasoning_chain"].append(f"Document Search Agent: No documents found in domain '{domain}'")
+        logger.warning(f"[DOCUMENT_AGENT] No documents found in domain '{domain}'")
         return state
 
     # Build context
@@ -514,11 +522,13 @@ def document_search_agent(state: AgentState) -> AgentState:
 
     if context.strip():
         state["document_context"] = context.strip()
-        state["reasoning_chain"].append("Document Search Agent: Retrieved context from vector store")
-        state["sources"] = [r["id"] for r in docs]  # or metadata if available
+        state["reasoning_chain"].append(f"Document Search Agent: Retrieved context from domain '{domain}' ({len(docs)} docs)")
+        state["sources"] = [r["id"] for r in docs]
         state["document_found"] = True
+        logger.info(f"[DOCUMENT_AGENT] Successfully retrieved context from domain '{domain}'")
     else:
         state["document_found"] = False
-        state["reasoning_chain"].append("Document Search Agent: Retrieved docs but no usable text")
+        state["reasoning_chain"].append(f"Document Search Agent: Retrieved docs from domain '{domain}' but no usable text")
+        logger.warning(f"[DOCUMENT_AGENT] Documents found but no usable text in domain '{domain}'")
 
     return state

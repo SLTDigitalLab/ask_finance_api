@@ -15,7 +15,6 @@ load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 DEFAULT_DIM = os.getenv("VECTORSTORE_DIM")
-VECTORSTORE_NAME = os.getenv("VECTORSTORE_NAME")
 DEFAULT_GEMINI_MODEL = os.getenv("DEFAULT_GEMINI_EMBEDDING_MODEL")
 
 if server:
@@ -23,37 +22,44 @@ if server:
 else:
     QDRANT_URL = os.getenv("VECTORSTORE_DEV_URL")
 
-def create_collection(name: str = VECTORSTORE_NAME, size: int = DEFAULT_DIM) -> str:
+def get_collection_name(domain: str) -> str:
+    """Generate collection name based on domain."""
+    return f"{domain.lower().replace(' ', '_')}"
+
+def create_collection(domain: str, size: int = DEFAULT_DIM) -> str:
+    collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
 
-    if client.collection_exists(name):
+    if client.collection_exists(collection_name):
         logger.info("The collection already exists")
-        return client.get_collection(name).status
+        return client.get_collection(collection_namename).status
 
     client.create_collection(
-        collection_name=name,
+        collection_name=collection_name,
         vectors_config=models.VectorParams(
             size=size,
             distance=models.Distance.COSINE,
         ),
     )
-    return client.get_collection(name).status
+    return client.get_collection(collection_name).status
 
-def delete_collection(name: str = VECTORSTORE_NAME) -> None:
+def delete_collection(domain: str) -> None:
+    collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
 
-    if client.collection_exists(name):
-        client.delete_collection(name)
+    if client.collection_exists(collection_name):
+        client.delete_collection(collection_name)
         logger.info("Collection Deleted")
     else:
         logger.info("The collection already exists")
 
 
-def get_collection(name: str = VECTORSTORE_NAME) -> Dict[str, Any]:
-    if client.collection_exists(name):
+def get_collection(domain: str) -> Dict[str, Any]:
+    if client.collection_exists(domain):
         """Return full collection info as a dict."""
+        collection_name = get_collection_name(domain)
         client = QdrantClient(url=QDRANT_URL)
-        info = client.get_collection(name)
+        info = client.get_collection(collection_name)
         return info.dict() if hasattr(info, "dict") else info
     else:
         return None
@@ -65,21 +71,22 @@ def get_all_collections() -> list[str]:
     return [c.name for c in response.collections]
 
 def get_all_points(
-    collection: str = VECTORSTORE_NAME,
+    domain: str,
     limit: int = 100,
     with_payload: bool = True,
     with_vectors: bool = False,
 ) -> List[Dict[str, Any]]:
 
+    collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
 
     all_points: List[Dict[str, Any]] = []
     offset: Optional[str] = None
 
-    if client.collection_exists(collection):
+    if client.collection_exists(collection_name):
         while True:
             scroll_result = client.scroll(
-                collection_name=collection,
+                collection_name=collection_name,
                 limit=limit,
                 offset=offset,
                 with_payload=with_payload,
@@ -130,15 +137,15 @@ def add_texts(
     metadatas: Optional[Sequence[Dict[str, Any]]] = None,
     ids: Optional[Sequence[Union[int, str]]] = None,
     *,
-    collection: str = VECTORSTORE_NAME
+    domain: str,
 ) -> Dict[str, Any]:
-    
+    collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
     
-    if not client.collection_exists(collection):
-        create_collection()
+    if not client.collection_exists(collection_name):
+        create_collection(domain=domain)
 
-    metadatas = [{"page_content":text} for text in texts]
+    metadatas = [{"page_content":text, "domain":domain} for text in texts]
 
     if ids is None:
         ids = [str(uuid.uuid4()) for _ in texts]
@@ -158,7 +165,7 @@ def add_texts(
         )
         for pid, vec, meta in zip(ids, vectors, metadatas)
     ]
-    result = client.upsert(collection_name=collection, points=points)
+    result = client.upsert(collection_name=collection_name, points=points)
     return result.dict() if hasattr(result, "dict") else result
 
 
@@ -166,15 +173,15 @@ def search_similar(
     query_text: str,
     limit: int = 5,
     *,
-    collection: str = VECTORSTORE_NAME,
+    domain: str,
     model: str = DEFAULT_GEMINI_MODEL,
     output_dimensionality: Optional[int] = None,
     with_payload: bool = True,
 ) -> List[Dict[str, Any]]:
-    
+    collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
     
-    if not client.collection_exists(collection):
+    if not client.collection_exists(collection_name):
         return []
 
     [qvec] = _embed_texts(
@@ -182,7 +189,7 @@ def search_similar(
     )
 
     hits = client.search(
-        collection_name=collection,
+        collection_name=collection_name,
         query_vector=qvec,
         limit=limit,
         with_payload=with_payload,
@@ -194,21 +201,76 @@ def search_similar(
         out.append(d)
     return out
 
+def search_across_domains(
+    query_text: str,
+    domains: List[str],
+    limit_per_domain: int = 5,
+    score_threshold: Optional[float] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Search across multiple domains and return results grouped by domain."""
+    results = {}
+    
+    for domain in domains:
+        domain_results = search_similar(
+            query_text=query_text,
+            domain=domain,
+            limit=limit_per_domain,
+            score_threshold=score_threshold
+        )
+        if domain_results:
+            results[domain] = domain_results
+    
+    return results
 
+def get_domain_stats(domain: str) -> Dict[str, Any]:
+    """Get statistics for a specific domain's collection."""
+    collection_name = get_collection_name(domain)
+    client = QdrantClient(url=QDRANT_URL)
+    
+    if not client.collection_exists(collection_name):
+        return {"exists": False, "domain": domain}
+    
+    info = client.get_collection(collection_name)
+    
+    return {
+        "exists": True,
+        "domain": domain,
+        "collection_name": collection_name,
+        "points_count": info.points_count,
+        "vectors_count": info.vectors_count,
+        "status": info.status,
+    }
 
 
 if __name__ == "__main__":
 
-    # docs = [
-    #     "Temple of the Tooth Relic is a sacred Buddhist site in Kandy.",
-    #     "Udawatta Kele Sanctuary has beautiful walking trails and wildlife.",
-    #     "The Kandy Lake is a popular spot for evening walks."
-    # ]
-
-    # upsert_result = add_texts(docs)
-    # print(upsert_result)
-
-    # delete_collection()
-
-    results = search_similar("Top places to see in Kandy", limit=4)
-    print(results)
+    create_collection("hr")
+    create_collection("sales")
+    create_collection("support")
+    
+    hr_docs = [
+        "Our company offers 15 days of paid vacation per year.",
+        "Health insurance enrollment opens in January.",
+        "Performance reviews are conducted quarterly."
+    ]
+    add_texts(hr_docs, domain="hr")
+    
+    sales_docs = [
+        "Q1 sales targets increased by 20%.",
+        "New CRM system training is mandatory for all sales staff.",
+        "Product launch scheduled for next month."
+    ]
+    add_texts(sales_docs, domain="sales")
+    
+    results = search_similar("vacation policy", domain="hr", limit=3)
+    print(f"HR results: {results}")
+    
+    multi_results = search_across_domains(
+        "training requirements",
+        domains=["hr", "sales"],
+        limit_per_domain=2
+    )
+    print(f"Multi-domain results: {multi_results}")
+    
+    hr_stats = get_domain_stats("hr")
+    print(f"HR domain stats: {hr_stats}")

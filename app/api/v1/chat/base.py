@@ -150,7 +150,6 @@ def initialize_available_collections():
     except Exception as e:
         logger.error(f"Error initializing collections: {e}")
 
-# Call initialization
 initialize_available_collections()
 
 user_sessions: Dict[str, Dict[str, Union[str, int]]] = {}
@@ -172,23 +171,24 @@ def convert_history_to_messages(history: List[Dict[str, str]]) -> List:
 def route_to_specific_agent(state: AgentState) -> str:
     """
     Enhanced routing function that uses destination context for intent detection.
+    IMPORTANT: This function should NOT modify state, only return the next node name.
     """
     query = state.get("query", "")
+    collection_id = state.get("collection_id")
+    
+    logger.info(f"[ROUTER] Routing query: {query}")
+    logger.info(f"[ROUTER] Collection ID in state: {collection_id}")
     
     # Use enhanced intent detector with destination context
     detected_intent = detect_intent_with_context(query)
 
     if detected_intent == "DOCUMENT":
-        state["reasoning_chain"].append("Enhanced Coordinator: Routing to document search agent based on contextual intent")
-        logger.info(f"Enhanced routing to document search agent for query: {query}")
+        logger.info(f"[ROUTER] Routing to document_search_agent for domain: {collection_id}")
         return "document_search_agent"
-
     else:
-        # Fallback if nothing detected
-        state["reasoning_chain"].append("Enhanced Coordinator: No clear intent, defaulting to document search agent")
-        logger.info(f"Enhanced routing to default document search agent for query: {query}")
+        logger.info(f"[ROUTER] Defaulting to document_search_agent for domain: {collection_id}")
         return "document_search_agent"
-
+    
 def save_chat_to_db(chat_id: str, role: str, message: str):
     try:
         db = DB(default_config())
@@ -242,6 +242,11 @@ def coordinator_agent(state: AgentState) -> AgentState:
     """Enhanced coordinator with centralized destination memory."""
     query = state.get("query", "")
     chat_id = state.get("chat_id")
+    collection_id = state.get("collection_id") 
+    
+    logger.info(f"[COORDINATOR] Processing query: {query}")
+    logger.info(f"[COORDINATOR] Collection ID: {collection_id}")
+    
     reasoning_chain = ["Coordinator: Analyzing query and routing to appropriate agents"]
 
     detected_intent = detect_intent(query)
@@ -254,6 +259,8 @@ def coordinator_agent(state: AgentState) -> AgentState:
     state["needs_web_search"] = needs_web_search
     state["needs_doc_search"] = needs_document
     state["reasoning_chain"] = reasoning_chain
+    if collection_id:
+        state["collection_id"] = collection_id
 
     active_agents = []
     
@@ -268,7 +275,7 @@ def coordinator_agent(state: AgentState) -> AgentState:
         reasoning_chain.append("Enhanced Coordinator: No specific intent detected, defaulting to document search")
         active_agents.append("document (default)")
 
-    logger.info(f"Query: '{query}' -> Active agents: {active_agents}")
+    logger.info(f"[COORDINATOR] Query: '{query}' -> Active agents: {active_agents} -> Domain: {collection_id}")
     return state
 
 def synthesis_agent(state: AgentState) -> AgentState:
@@ -350,7 +357,6 @@ If the current question includes vague references, use the destination and previ
                 convert_system_message_to_human=True
             )
             
-            # Enhanced prompt that includes destination context
             prompt_content = f"""
 {system_prompt}
 
@@ -392,7 +398,6 @@ def should_fallback_to_web_search(state: AgentState) -> str:
     document_context = state.get("document_context", "")
     answer = state.get("answer", "")
     
-    # Fallback to web search if document search found no useful information
     if (not document_context or 
         document_context == "No relevant documents found." or
         not answer or 
@@ -406,25 +411,37 @@ def should_fallback_to_web_search(state: AgentState) -> str:
         logger.info("Document search successful, routing to synthesis")
         return "synthesis_agent"
 
+def debug_state_node(state: AgentState) -> AgentState:
+    """Debug node to inspect state between coordinator and document agent."""
+    logger.info(f"[DEBUG_NODE] === State Inspection ===")
+    logger.info(f"[DEBUG_NODE] collection_id: {state.get('collection_id')}")
+    logger.info(f"[DEBUG_NODE] query: {state.get('query')}")
+    logger.info(f"[DEBUG_NODE] All keys: {list(state.keys())}")
+    logger.info(f"[DEBUG_NODE] === End State Inspection ===")
+    return state
+
 def create_chat_graph():
     with trace("create_chat_graph"):
         """Create the LangGraph workflow with proper routing."""
         workflow = StateGraph(AgentState)
         
         workflow.add_node("coordinator", coordinator_agent)
+        workflow.add_node("debug_state", debug_state_node) 
         workflow.add_node("document_search_agent", document_search_agent)
         workflow.add_node("web_search_agent", web_search_agent)
         workflow.add_node("synthesis_agent", synthesis_agent)
         
         workflow.set_entry_point("coordinator")
 
+        workflow.add_edge("coordinator", "debug_state") 
+
         workflow.add_conditional_edges(
-        "coordinator",
-        route_to_specific_agent,
-        { 
-            "document_search_agent": "document_search_agent"
-        }
-    )
+            "debug_state", 
+            route_to_specific_agent,
+            { 
+                "document_search_agent": "document_search_agent"
+            }
+        )
         
         workflow.add_conditional_edges(
             "document_search_agent",
@@ -441,7 +458,7 @@ def create_chat_graph():
         app = workflow.compile(checkpointer=memory)
         
         return app
-
+    
 chat_graph = create_chat_graph()
 
 def get_or_create_chat_session(chat_id: str = None) -> str:
@@ -449,7 +466,6 @@ def get_or_create_chat_session(chat_id: str = None) -> str:
     if chat_id and chat_id in chat_sessions:
         return chat_id
 
-    # If no chat_id or not found, create a new session
     new_chat_id = str(uuid.uuid4())
     chat_sessions[new_chat_id] = {
         "messages": [],
@@ -458,14 +474,18 @@ def get_or_create_chat_session(chat_id: str = None) -> str:
     return new_chat_id
 
 
-@router.post("/chat", response_model=ChatResponse, tags=["Chat"])
+@router.post("/{domain}/chat", response_model=ChatResponse, tags=["Chat"])
 async def chat_endpoint(
     request: ChatRequest,
+    domain: str,
     token: str = Depends(token_manager.verify_frontend_token)
 ):
     with trace("chat_endpoint"):
         """Main chat endpoint."""
         try:
+            logger.info(f"[CHAT_ENDPOINT] Received request for domain: '{domain}'")
+            logger.info(f"[CHAT_ENDPOINT] Query: {request.query}")
+            
             chat_id = request.chat_id or str(uuid.uuid4())
 
             db = DB(default_config())
@@ -485,7 +505,6 @@ async def chat_endpoint(
             finally:
                 db.close()
 
-            # Convert DB rows to structured dict format
             history_messages = []
             for row in history_rows:
                 role = row["role"]
@@ -511,7 +530,6 @@ async def chat_endpoint(
             # Append the current message
             messages.append(HumanMessage(content=request.query))
 
-            
             initial_state = AgentState(
                 messages=[HumanMessage(content=request.query)],
                 query=request.query,
@@ -523,15 +541,21 @@ async def chat_endpoint(
                 document_context=None,
                 reasoning_chain=[],
                 previous_context=previous_context,
+                collection_id=domain, 
             )
             
-            # Run the graph
+            logger.info(f"[CHAT_ENDPOINT] Initial state collection_id: {initial_state.get('collection_id')}")
+
             config = {"configurable": {"thread_id": chat_id}}
             final_state = await asyncio.to_thread(
                 chat_graph.invoke, 
                 initial_state, 
                 config
             )
+
+            logger.info(f"[CHAT_ENDPOINT] Final state used domain: {final_state.get('collection_id')}")
+            logger.info(f"[CHAT_ENDPOINT] Document found: {final_state.get('document_found')}")
+            logger.info(f"[CHAT_ENDPOINT] Reasoning chain: {final_state.get('reasoning_chain')}")
 
             if chat_id not in chat_sessions:
                 chat_sessions[chat_id] = {"messages": []}
@@ -551,9 +575,11 @@ async def chat_endpoint(
             )
             
         except Exception as e:
-            logger.error(f"Chat endpoint error: {e}")
+            logger.error(f"[CHAT_ENDPOINT] Chat endpoint error: {e}")
+            import traceback
+            logger.error(f"[CHAT_ENDPOINT] Traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
-
+        
 
 @router.get("/health", tags=["Chat"])
 async def health_check(

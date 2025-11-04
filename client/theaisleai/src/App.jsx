@@ -56,9 +56,9 @@ function App() {
     <BrowserRouter>
         <Routes>
           <Route path="/" element={<Navigate to="/chat" replace />} />
-          <Route path="" element={<Layout />}>
-            <Route path="chat" element={<ChatPage />} />
-          </Route>
+          <Route path=":domain" element={<Layout />}>
+          <Route path="chat" element={<ChatPage />} />
+        </Route>
         </Routes>
     </BrowserRouter>
   );
