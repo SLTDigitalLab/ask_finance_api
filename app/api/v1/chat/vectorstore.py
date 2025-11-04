@@ -32,7 +32,7 @@ def create_collection(domain: str, size: int = DEFAULT_DIM) -> str:
 
     if client.collection_exists(collection_name):
         logger.info("The collection already exists")
-        return client.get_collection(collection_namename).status
+        return client.get_collection(collection_name).status
 
     client.create_collection(
         collection_name=collection_name,
@@ -65,10 +65,44 @@ def get_collection(domain: str) -> Dict[str, Any]:
         return None
 
 
-def get_all_collections() -> list[str]:
-    client = QdrantClient(url=QDRANT_URL)
-    response = client.get_collections()
-    return [c.name for c in response.collections]
+def get_all_collections() -> List[Dict[str, Any]]:
+    """
+    Return list of collections with domain info.
+
+    FIXED: Properly handle the Qdrant response structure.
+    """
+    try:
+        client = QdrantClient(url=QDRANT_URL)
+        response = client.get_collections()
+
+        logger.info(f"Response type: {type(response)}")
+        logger.info(f"Response: {response}")
+
+        if hasattr(response, 'collections'):
+            collections_list = response.collections
+        else:
+            collections_list = response if isinstance(response, list) else []
+
+        result = []
+        for collection in collections_list:
+            if hasattr(collection, 'name'):
+                name = collection.name
+            elif isinstance(collection, dict):
+                name = collection.get('name', '')
+            else:
+                name = str(collection)
+
+            result.append({
+                "domain": name,
+                "collection_name": name
+            })
+
+        logger.info(f"Found {len(result)} collections: {[c['domain'] for c in result]}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in get_all_collections: {str(e)}", exc_info=True)
+        return []
 
 def get_all_points(
     domain: str,

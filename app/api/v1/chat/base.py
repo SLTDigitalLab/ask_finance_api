@@ -20,7 +20,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_tavily import TavilySearch
 from .document_agent import document_search_agent
-from .web_search_agent import web_search_agent
 from .app_types import AgentState
 import spacy
 from langsmith import trace
@@ -252,11 +251,8 @@ def coordinator_agent(state: AgentState) -> AgentState:
     detected_intent = detect_intent(query)
 
     lower_query = query.lower()
-    web_keywords = ["current", "recent", "latest", "news", "today", "2024", "2025"]
-    needs_web_search = any(kw in lower_query for kw in web_keywords)
     needs_document = detected_intent == "DOCUMENT" 
 
-    state["needs_web_search"] = needs_web_search
     state["needs_doc_search"] = needs_document
     state["reasoning_chain"] = reasoning_chain
     if collection_id:
@@ -267,10 +263,7 @@ def coordinator_agent(state: AgentState) -> AgentState:
     if needs_document:
         active_agents.append("document")
         reasoning_chain.append("Enhanced Coordinator: Will route to document agent")
-    if needs_web_search:
-        active_agents.append("web search")
-        reasoning_chain.append("Enhanced Coordinator: Will route to web search agent")
-
+    
     if not active_agents:
         reasoning_chain.append("Enhanced Coordinator: No specific intent detected, defaulting to document search")
         active_agents.append("document (default)")
@@ -280,112 +273,84 @@ def coordinator_agent(state: AgentState) -> AgentState:
 
 def synthesis_agent(state: AgentState) -> AgentState:
     with trace("synthesis_agent"):
-        """Agent that synthesizes information and generates final response using Gemini."""
+        """Agent that synthesizes information and generates final response using only the document context."""
+
         query = state["query"]
         chat_id = state.get("chat_id")
-        search_results = state.get("search_results", "")
-        document_context = state.get("document_context", "") 
+        document_context = state.get("document_context", "")
         chat_mode = state.get("chat_mode", "short")
-        previous_context = state.get("previous_context", "")
-        
-        user_input = query.strip().lower()
 
         context_parts = []
-
-        vague_references = ["it", "its", "that", "this", "there", "they", "them", "their"]
-        needs_context = any(ref in query.lower() for ref in vague_references)
-        
-        if previous_context and needs_context:
-            context_lines = previous_context.split('\n')
-            recent_context = '\n'.join(context_lines[-4:]) if len(context_lines) > 4 else previous_context
-            context_parts.append(f"Recent Context (for reference only):\n{recent_context}")
-        
         if document_context and document_context != "No relevant documents found.":
             context_parts.append(f"Document Context:\n{document_context}")
-        if search_results and search_results != "":
-            context_parts.append(f"Web Search Results:\n{search_results}")
-        
+
         context = "\n\n".join(context_parts) if context_parts else ""
-        
-        if chat_mode == "long":
-            system_prompt = """You are a helpful AI assistant that provides detailed, comprehensive responses.
-            Use the provided context to answer questions thoroughly. If you use information from the context,
-        be specific about which sources you're referencing. Provide detailed explanations and examples where appropriate.
-        
+
+        system_prompt = """You are a helpful AI assistant that provides clear and concise responses.
+Use ONLY the provided document context to answer clearly and accurately.
+Focus on the most important information.
+
 IMPORTANT INSTRUCTIONS:
-- Answer ONLY the current user question
-- Do NOT repeat information from previous conversations unless specifically asked
-- If previous context is provided, use it only to understand what the user is referring to
-- Focus on providing NEW information relevant to the current question
-- Be specific about sources when using context information
+- Use ONLY the provided document context.
+- If no document context is provided or it doesn't contain the answer, respond with:
+  "I couldn’t find relevant information in the knowledge base."
+- Never use general or world knowledge.
+"""
 
-Use the provided context to answer the current question thoroughly. Provide detailed explanations and examples where appropriate."""
-
-        else:
-            system_prompt = """You are a helpful AI assistant that provides clear and concise responses.
-            Use the provided chat history, destination context, and current context to answer clearly and accurately.
-        Focus on the most important information.
-        If no context is provided, use your general knowledge to answer the question.
-        Be concise or detailed depending on chat mode. If the question includes vague references (e.g., 'its', 'that', 'this', 'there'),
-        resolve them using the chat history provided. Always infer references from prior turns in the conversation if
-        available.
-        
-IMPORTANT INSTRUCTIONS:
-- Answer ONLY the current user question
-- Do NOT repeat or summarize previous conversations
-- Focus on NEW information relevant to the current question
-- Be concise and direct
-
-If the current question includes vague references, use the destination and previous context to understand what they refer to, but don't repeat previous answers."""
+        if not document_context or document_context == "No relevant documents found.":
+            state["answer"] = "I couldn’t find relevant information in the knowledge base."
+            state["reasoning_chain"].append(
+                "Synthesis Agent: Blocked general knowledge, no relevant documents found."
+            )
+            return state
 
         try:
             if not os.getenv("GOOGLE_API_KEY"):
-                response_parts = []
-                if context:
-                    response_parts.append(f"Based on the available information:\n\n{context[:1000]}...")
-                else:
-                    response_parts.append("I apologize, but I don't have access to current information to answer your question accurately.")
-                
-                
+                response_parts = [
+                    f"Based on the available information:\n\n{context[:1000]}..."
+                ]
                 state["answer"] = "\n".join(response_parts)
-                state["reasoning_chain"].append("Synthesis Agent: Used fallback response (no Gemini API key)")
+                state["reasoning_chain"].append(
+                    "Synthesis Agent: Used fallback response (no Gemini API key)."
+                )
                 return state
-            
+
             llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash", 
+                model="gemini-2.5-flash",
                 temperature=0.7,
-                convert_system_message_to_human=True
+                convert_system_message_to_human=True,
             )
-            
+
             prompt_content = f"""
 {system_prompt}
 
 Current User Question: "{query}"
 
-{f"Context (use only if needed to resolve references): {context}" if context else ""}
+Document Context:
+{context}
 
-Please answer the current question directly without repeating previous conversation content.
-If the question contains vague references like "there", "it", "that place", use the destination context to understand what location is being referenced.
+Answer ONLY using the document context. If not found, say:
+"I couldn’t find relevant information in the knowledge base."
 """
-            
+
             response = llm.invoke([HumanMessage(content=prompt_content)])
-            
-            answer = response.content           
+            answer = response.content
+
             state["answer"] = answer
-            
+            state["reasoning_chain"].append("Synthesis Agent: Used document-only reasoning.")
+            return state
+
         except Exception as e:
-            response_parts = []
-            if context:
-                response_parts.append(f"Based on the available information:\n\n{context[:1000]}...")
-            else:
-                response_parts.append(f"I apologize, but I encountered an error while processing your request: {str(e)}")
-            
+            response_parts = [
+                f"Error: {str(e)}",
+                f"Based on available context:\n\n{context[:1000]}..."
+            ]
             state["answer"] = "\n".join(response_parts)
-            state["reasoning_chain"].append(f"Synthesis Agent: Error occurred, used fallback - {str(e)}")
+            state["reasoning_chain"].append(f"Synthesis Agent: Error occurred - {str(e)}")
             logger.error(f"Synthesis failed: {e}")
-        
-        return state
-        
+            return state
+
+
 def should_continue(state: AgentState) -> str:
     with trace("should_continue"):
         """Determine if we should continue processing or end."""
@@ -393,24 +358,6 @@ def should_continue(state: AgentState) -> str:
             return END
         return "synthesis_agent"
     
-def should_fallback_to_web_search(state: AgentState) -> str:
-    """Determine if document search should fallback to web search."""
-    document_context = state.get("document_context", "")
-    answer = state.get("answer", "")
-    
-    if (not document_context or 
-        document_context == "No relevant documents found." or
-        not answer or 
-        len(answer.strip()) < 50): 
-        
-        state["reasoning_chain"].append("Document search fallback: No sufficient information found, routing to web search")
-        logger.info("Document search failed, falling back to web search")
-        return "web_search_agent"
-    else:
-        state["reasoning_chain"].append("Document search: Sufficient information found, routing to synthesis")
-        logger.info("Document search successful, routing to synthesis")
-        return "synthesis_agent"
-
 def debug_state_node(state: AgentState) -> AgentState:
     """Debug node to inspect state between coordinator and document agent."""
     logger.info(f"[DEBUG_NODE] === State Inspection ===")
@@ -428,7 +375,7 @@ def create_chat_graph():
         workflow.add_node("coordinator", coordinator_agent)
         workflow.add_node("debug_state", debug_state_node) 
         workflow.add_node("document_search_agent", document_search_agent)
-        workflow.add_node("web_search_agent", web_search_agent)
+        
         workflow.add_node("synthesis_agent", synthesis_agent)
         
         workflow.set_entry_point("coordinator")
@@ -443,14 +390,7 @@ def create_chat_graph():
             }
         )
         
-        workflow.add_conditional_edges(
-            "document_search_agent",
-            should_fallback_to_web_search,
-            {"web_search_agent": "web_search_agent", 
-             "synthesis_agent": "synthesis_agent"
-            }
-        )
-        workflow.add_edge("web_search_agent","synthesis_agent" )
+        workflow.add_edge("document_search_agent","synthesis_agent" )
 
         workflow.add_edge("synthesis_agent", END)
     
