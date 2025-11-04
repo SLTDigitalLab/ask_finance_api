@@ -30,6 +30,7 @@ import SmartToyIcon from "@mui/icons-material/SmartToy";
 import SendIcon from "@mui/icons-material/Send";
 import { CHAT } from "../urls";
 import { keyframes } from "@emotion/react";
+import { useParams } from "react-router-dom";
 
 const spin = keyframes`
   0% { transform: rotate(0deg); }
@@ -64,6 +65,7 @@ function ChatInterface() {
   const [page, setPage] = useState(0);
   const [refHeader, setRefHeader] = useState("");
   const btnRef = React.useRef();
+  const { domain } = useParams();
 
   const FRONTEND_TOKEN = "lYrCN/UOC8c+e7CveLp1awTcoUJG8wGDYw5IaK5wf+w=";
 
@@ -80,12 +82,14 @@ function ChatInterface() {
         setChatSessionId(currentChatId);
       }
 
+      
       // Send query to backend with chat_id
       const response = await axios.post(
-        CHAT.MULTI_AGENT_CHAT,
+        CHAT.MULTI_AGENT_CHAT(domain),
         {
           query: question,
           chat_id: currentChatId,
+          domain: domain,
         },
         {
           headers: {

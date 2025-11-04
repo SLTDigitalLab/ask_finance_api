@@ -15,7 +15,7 @@ import {
   useColorMode,
   VStack,
 } from '@chakra-ui/react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
@@ -42,6 +42,7 @@ function NavBar() {
   const navigate = useNavigate();
   const { isLoggedIn, userObj } = useSelector((state) => state.user);
   const dispatch = useDispatch();
+  const { domain } = useParams();
 
   const { colorMode, toggleColorMode } = useColorMode();
 
@@ -50,6 +51,16 @@ function NavBar() {
     event.stopPropagation();
     setActiveSubMenu(activeSubMenu === menu ? null : menu);
   };
+
+  const formatDomainName = (domainName) => {
+    if (!domainName) return "ASK FINANCE"; 
+    return `${domainName
+      .split('_')
+      .map(word => word.toUpperCase())
+      .join(' ')}`;
+  };
+
+  const displayName = formatDomainName(domain);
 
   return (
     <MotionFlex
@@ -108,7 +119,7 @@ function NavBar() {
         ),
     }}
   >
-    ASK FINANCE
+    {displayName}
   </Heading>
 
   {/* Accent underline */}

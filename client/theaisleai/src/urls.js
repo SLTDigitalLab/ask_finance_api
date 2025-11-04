@@ -9,7 +9,7 @@ export const CHAT = {
     DELETE_LOCAL_CACHE: BASE_URL + "api/v1/chat/deletecache",
     CHAT_HEADER: BASE_URL + "api/v1/chat/history/header",
     GET_PDF: BASE_URL + "api/v1/chat/get-pdf",
-    MULTI_AGENT_CHAT: BASE_URL + "api/v1/chat"
+    MULTI_AGENT_CHAT: (domain) => `${BASE_URL}api/v1/${domain}/chat`,
 }
 
 export const END_POINTS = {

@@ -17,3 +17,4 @@ class AgentState(TypedDict):
     map_link: Optional[str]
     booking_details: Optional[Dict]
     booking_options: Optional[Dict]
+    collection_id: Optional[str]
