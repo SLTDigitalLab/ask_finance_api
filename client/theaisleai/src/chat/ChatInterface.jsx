@@ -37,7 +37,6 @@ const spin = keyframes`
   100% { transform: rotate(360deg); }
 `;
 
-
 function ChatInterface() {
   const { colorMode } = useColorMode();
   const isDarkMode = colorMode === "dark";
@@ -82,7 +81,6 @@ function ChatInterface() {
         setChatSessionId(currentChatId);
       }
 
-      
       // Send query to backend with chat_id
       const response = await axios.post(
         CHAT.MULTI_AGENT_CHAT(domain),
@@ -99,7 +97,8 @@ function ChatInterface() {
         }
       );
 
-      const botAnswer = response.data.answer || "No answer from multi-agent backend";
+      const botAnswer =
+        response.data.answer || "No answer from multi-agent backend";
       const mapLinks = response.data.map_links || [];
 
       // If backend returns new chat_id on first request, store it
@@ -129,7 +128,6 @@ function ChatInterface() {
     }
   };
 
- 
   return (
     <Flex h="80vh" w="100%" justify="center" align="center">
       {/* Centered main container, same width as before (85%) */}
@@ -147,8 +145,21 @@ function ChatInterface() {
         <VStack spacing={2} p={4} pb={0} flexGrow={1}>
           <VStack w="full" h="70vh" alignItems="left" p={3} overflowY="auto">
             {chatHistory.length === 0 ? (
-              <VStack spacing={1} align="center" p={5} borderRadius="15" boxShadow="xl" flexGrow={100}>
-                <Image src="/12.png" alt="Logo" boxSize="300px" mb={-10} opacity="70%" />
+              <VStack
+                spacing={1}
+                align="center"
+                p={5}
+                borderRadius="15"
+                boxShadow="xl"
+                flexGrow={100}
+              >
+                <Image
+                  src="/12.png"
+                  alt="Logo"
+                  boxSize="300px"
+                  mb={-10}
+                  opacity="70%"
+                />
                 <Text fontSize="2xl" fontWeight="bold" color="gray.600">
                   How can I assist you today?
                 </Text>
@@ -168,24 +179,41 @@ function ChatInterface() {
                 }
                 borderRadius="15"
               >
-                <Text fontWeight="bold">{entry.role === "user" ? <FaceIcon /> : <SmartToyIcon />}</Text>
+                <Text fontWeight="bold">
+                  {entry.role === "user" ? <FaceIcon /> : <SmartToyIcon />}
+                </Text>
 
                 {entry.message === "Generating response..." ? (
                   <HStack>
                     <Text>Generating response</Text>
-                    <Spinner size="sm" thickness="3px" speed="0.5s" color="blue.500" />
+                    <Spinner
+                      size="sm"
+                      thickness="3px"
+                      speed="0.5s"
+                      color="blue.500"
+                    />
                   </HStack>
                 ) : (
-                  <ReactMarkdown>{entry.message.normalize("NFC")}</ReactMarkdown>
+                  <ReactMarkdown>
+                    {entry.message.normalize("NFC")}
+                  </ReactMarkdown>
                 )}
 
                 {Array.isArray(entry.image) &&
                   entry.image.length > 0 &&
-                  entry.image.map((img, idx) => <Image key={idx} rounded="md" src={img} alt="Image" />)}
+                  entry.image.map((img, idx) => (
+                    <Image key={idx} rounded="md" src={img} alt="Image" />
+                  ))}
 
                 {Array.isArray(entry.file) && entry.file.length > 0 && (
                   <>
-                    <Drawer isOpen={isOpen} placement="right" onClose={onClose} finalFocusRef={btnRef} size="xl">
+                    <Drawer
+                      isOpen={isOpen}
+                      placement="right"
+                      onClose={onClose}
+                      finalFocusRef={btnRef}
+                      size="xl"
+                    >
                       <DrawerOverlay />
                       <DrawerContent>
                         <DrawerCloseButton />
@@ -202,40 +230,58 @@ function ChatInterface() {
             ))}
 
             {isLoading && (
-              <VStack align="start" spacing={1} p={5} backgroundColor={useColorModeValue("gray.200", "gray.600")} borderRadius="15">
+              <VStack
+                align="start"
+                spacing={1}
+                p={5}
+                backgroundColor={useColorModeValue("gray.200", "gray.600")}
+                borderRadius="15"
+              >
                 <SmartToyIcon />
                 <Text fontWeight="bold">Generating response...</Text>
-                <Spinner size="sm" thickness="3px" speed="0.5s" color="blue.500" />
+                <Spinner
+                  size="sm"
+                  thickness="3px"
+                  speed="0.5s"
+                  color="blue.500"
+                />
               </VStack>
             )}
           </VStack>
 
           {/* Input Row */}
-<Flex
-  w={{ base: "80%", md: "80%" }}
-  mx="auto"
-  align="center"
-  gap={3}
-  wrap="nowrap"         // keep on one line
->
-  <Input
-    value={question}
-    onChange={(e) => setQuestion(e.target.value)}
-    flex="1"            // fill remaining space
-    minW={0}            // allow shrinking on small screens
-    bg={inputBgColor}
-    color={textColor}
-  />
-  <Button
-    type="submit"
-    isLoading={isLoading}
-    isDisabled={question.trim() === ""}
-    onClick={handleSubmit}
-    flexShrink={0}      // don't let button shrink
-  >
-    <SendIcon />
-  </Button>
-</Flex>
+          <Flex
+            w={{ base: "80%", md: "80%" }}
+            mx="auto"
+            align="center"
+            gap={3}
+            wrap="nowrap" // keep on one line
+          >
+            <Input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              flex="1"
+              minW={0}
+              bg={inputBgColor}
+              color={textColor}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && question.trim() !== "") {
+                  e.preventDefault(); // prevents form submission reload
+                  handleSubmit(e);
+                }
+              }}
+            />
+
+            <Button
+              type="submit"
+              isLoading={isLoading}
+              isDisabled={question.trim() === ""}
+              onClick={handleSubmit}
+              flexShrink={0} // don't let button shrink
+            >
+              <SendIcon />
+            </Button>
+          </Flex>
         </VStack>
       </Box>
     </Flex>
