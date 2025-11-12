@@ -10,6 +10,7 @@ import {
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import axios from "axios";
 import ChatPage from "./chat/ChatInterface.jsx";
+import ChatIframe from "./chat/ChatIframe.jsx";
 import Layout from "./layouts/Layout.jsx";
 
 function App() {
@@ -54,12 +55,13 @@ function App() {
 
   return (
     <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Navigate to="/chat" replace />} />
-          <Route path=":domain" element={<Layout />}>
+      <Routes>
+        <Route path="/" element={<Navigate to="/chat" replace />} />
+        <Route path=":domain" element={<Layout />}>
           <Route path="chat" element={<ChatPage />} />
+          <Route path="iframe" element={<ChatIframe />} />
         </Route>
-        </Routes>
+      </Routes>
     </BrowserRouter>
   );
 }
