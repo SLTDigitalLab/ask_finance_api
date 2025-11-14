@@ -34,11 +34,27 @@ def detect_intent_with_context(query: str, destination_context: str = None) -> s
 def detect_intent(query: str) -> str:
     """
     Unified intent detection for queries:
+    - GREETING (hello, hi, greetings, thanks, conversational phrases, conversational endings)
     - DOCUMENT (knowledge/document retrieval intent)
     - NONE (no clear intent)
     """
 
     try:
+        greeting_patterns = [
+            r"^(hi|hello|hey|greetings|good morning|good afternoon|good evening)[\s\.,!]*$",
+            r"^(howdy|what's up|sup|yo)[\s\.,!]*$",
+            r"^hi there|hello there$",
+            r"^(thanks|thank you|thank ya|thx|ty|cheers|appreciate it)[\s\.,!]*$",
+            r"^(ok|okay|alright|sure|got it|cool|nice)[\s\.,!]*$",
+        ]
+        
+        query_lower = query.lower().strip()
+        
+        # Check if it's purely a greeting
+        if any(re.search(pattern, query_lower) for pattern in greeting_patterns):
+            logger.info(f"Detected greeting: '{query}'")
+            return "GREETING"
+
         doc = nlp(query)
 
         has_booking_verbs = any(
@@ -101,12 +117,15 @@ def detect_intent(query: str) -> str:
 
         prompt = PromptTemplate.from_template(
             """Classify the user's intent into one of these categories:
+- GREETING: if the user is just saying hello, hi, or similar casual greetings
 - BOOKING: if the user wants to book, reserve, or find accommodation (hotel, room, etc.)
 - MAPPING: if the user wants directions, navigation, or routes between places
 - DOCUMENT: if the user asks for information, details, places to visit, attractions, things to do, or general knowledge
 - NONE: if none of the above apply
 
-IMPORTANT: Questions about "places in X", "things to do in X", "attractions in X", "famous X in Y" should be classified as DOCUMENT.
+IMPORTANT:
+- Simple greetings like "hi", "hello", "hey", "thank you" should be classified as GREETING
+- Questions about "places in X", "things to do in X", "attractions in X", "famous X in Y" should be classified as DOCUMENT.
 
 Linguistic analysis:
 - Query: "{query}"
@@ -122,6 +141,9 @@ Linguistic analysis:
 - Document patterns: {has_document_patterns}
 
 Examples:
+- "hi" → GREETING
+- "hello there" → GREETING
+- "thank you" → GREETING
 - "famous places in kandy" → DOCUMENT
 - "places there" → DOCUMENT  
 - "things to do there" → DOCUMENT
@@ -129,7 +151,7 @@ Examples:
 - "directions to kandy" → MAPPING
 - "book hotel there" → BOOKING
 
-Answer with only one label: BOOKING, MAPPING, DOCUMENT, or NONE.
+Answer with only one label: GREETING, BOOKING, MAPPING, DOCUMENT, or NONE.
 """
         )
 
@@ -155,7 +177,7 @@ Answer with only one label: BOOKING, MAPPING, DOCUMENT, or NONE.
         )
 
         intent = result.strip().upper()
-        if intent not in ["BOOKING", "MAPPING", "DOCUMENT", "NONE"]:
+        if intent not in ["GREETING", "BOOKING", "MAPPING", "DOCUMENT", "NONE"]:
             intent = "NONE"
 
         logger.info(f"Enhanced intent detection for '{query}': {intent}")
@@ -165,6 +187,11 @@ Answer with only one label: BOOKING, MAPPING, DOCUMENT, or NONE.
         logger.error(f"Enhanced intent detection failed: {e}")
         
         query_lower = query.lower()
+
+        # Add greeting fallback
+        if any(word in query_lower for word in ["hi", "hello", "hey", "greetings", "thank you"]) and len(query_lower.split()) <= 3:
+            logger.info(f"Fallback: Classified '{query}' as GREETING")
+            return "GREETING"
 
         document_fallback_patterns = [
             "places", "attractions", "sites", "things to do", "visit",
