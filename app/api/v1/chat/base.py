@@ -181,7 +181,11 @@ def route_to_specific_agent(state: AgentState) -> str:
     # Use enhanced intent detector with destination context
     detected_intent = detect_intent_with_context(query)
 
-    if detected_intent == "DOCUMENT":
+    # For greetings, still route to document_search_agent but synthesis_agent will handle it naturally
+    if detected_intent == "GREETING":
+        logger.info(f"[ROUTER] Detected greeting, routing to document_search_agent (will be handled in synthesis)")
+        return "document_search_agent"
+    elif detected_intent == "DOCUMENT":
         logger.info(f"[ROUTER] Routing to document_search_agent for domain: {collection_id}")
         return "document_search_agent"
     else:
@@ -279,6 +283,65 @@ def synthesis_agent(state: AgentState) -> AgentState:
         chat_id = state.get("chat_id")
         document_context = state.get("document_context", "")
         chat_mode = state.get("chat_mode", "short")
+
+        # Check if this is a greeting or a conversational phrase before processing document context
+        detected_intent = detect_intent(query)
+        
+        if detected_intent == "GREETING":
+            # Handle various conversation phrases naturally without document search
+            query_lower = query.lower().strip()
+            
+            # Conversation starters
+            if any(word in query_lower for word in ["hi", "hello", "hey", "greetings", "good morning", "good afternoon", "good evening"]):
+                greeting_responses = [
+                    "Hello! How can I help you today?",
+                    "Hi there! What can I assist you with?", 
+                    "Hello! Feel free to ask me any questions.",
+                    "Hi! I'm here to help. What would you like to know?"
+                ]
+            
+            # Thanks/acknowledgments
+            elif any(word in query_lower for word in ["thanks", "thank you", "thank", "thx", "appreciate"]):
+                greeting_responses = [
+                    "You're welcome!",
+                    "My pleasure!",
+                    "Happy to help!",
+                    "Glad I could assist!",
+                    "Anytime!"
+                ]
+            
+            # Conversation endings
+            elif any(word in query_lower for word in ["bye", "goodbye", "see you", "farewell"]):
+                greeting_responses = [
+                    "Goodbye! Feel free to ask if you have more questions.",
+                    "See you! Have a great day!",
+                    "Bye! Come back anytime you need help.",
+                    "Take care!"
+                ]
+            
+            # Simple acknowledgments
+            elif any(word in query_lower for word in ["ok", "okay", "alright", "sure", "got it", "cool", "nice"]):
+                greeting_responses = [
+                    "Great!",
+                    "Alright!",
+                    "Okay!",
+                    "Sure thing!",
+                    "Got it!"
+                ]
+            
+            # Default greeting response
+            else:
+                greeting_responses = [
+                    "Hello! How can I help you?",
+                    "Hi there! What can I do for you?",
+                    "Hello! I'm here to assist."
+                ]
+                
+            import random
+            state["answer"] = random.choice(greeting_responses)
+            state["reasoning_chain"].append("Synthesis Agent: Responded naturally to greeting")
+            state["sources"] = []
+            return state
 
         context_parts = []
         if document_context and document_context != "No relevant documents found.":
