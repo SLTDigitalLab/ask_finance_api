@@ -25,6 +25,7 @@ import spacy
 from langsmith import trace
 from .intent_detector import detect_intent, detect_intent_with_context
 from .auth import verify_token, token_manager
+from .context_manager import context_manager
 
 nlp = spacy.load("en_core_web_sm")
 
@@ -188,22 +189,30 @@ def route_to_specific_agent(state: AgentState) -> str:
         logger.info(f"[ROUTER] Defaulting to document_search_agent for domain: {collection_id}")
         return "document_search_agent"
     
-def save_chat_to_db(chat_id: str, role: str, message: str):
+def save_chat_to_db(chat_id: str, role: str, message: str, domain: str = "default"):
+    """Save chat message to database with domain."""
+    db = None
     try:
         db = DB(default_config())
+        cursor = db.conn.cursor()
 
-        logger.info(f"Saving {role} message to DB: chat_id={chat_id}")
+        logger.info(f"Saving {role} message to DB: chat_id={chat_id}, domain={domain}")
 
         insert_query = """
-        INSERT INTO ask_hr_history (chat_id, role, message, timestamp)
-        VALUES (%s, %s, %s, NOW())
+        INSERT INTO ask_hr_history (chat_id, role, message, domain, timestamp)
+        VALUES (%s, %s, %s, %s, NOW())
         """
-        db.exec(insert_query, (chat_id, role, message))
-        db.commit()
+        cursor.execute(insert_query, (chat_id, role, message, domain))
+        db.conn.commit()
+        
     except Exception as e:
         logger.error(f"Error saving message to database: {e}")
     finally:
-        db.close()
+        if db:
+            try:
+                db.close()
+            except:
+                pass
 
 def extract_subject_from_messages(messages: List[BaseMessage]) -> str:
     """Try to extract a subject entity from previous human/assistant messages."""
@@ -238,118 +247,107 @@ def enrich_query_with_context(query: str, messages: List[BaseMessage]) -> str:
     return query
 
 def coordinator_agent(state: AgentState) -> AgentState:
-    """Enhanced coordinator with centralized destination memory."""
+    """Enhanced coordinator with early query enrichment."""
     query = state.get("query", "")
     chat_id = state.get("chat_id")
-    collection_id = state.get("collection_id") 
+    collection_id = state.get("collection_id")
     
-    logger.info(f"[COORDINATOR] Processing query: {query}")
-    logger.info(f"[COORDINATOR] Collection ID: {collection_id}")
+    logger.info(f"[COORDINATOR] Original query: {query}")
+
+    if chat_id:
+        enriched_query = context_manager.enrich_query_with_context(chat_id, query)
+        if enriched_query != query:
+            logger.info(f"[COORDINATOR] Enriched to: {enriched_query}")
+            state["query"] = enriched_query  
+            state["original_query"] = query  
     
     reasoning_chain = ["Coordinator: Analyzing query and routing to appropriate agents"]
-
-    detected_intent = detect_intent(query)
-
-    lower_query = query.lower()
-    needs_document = detected_intent == "DOCUMENT" 
-
+    
+    detected_intent = detect_intent(state["query"]) 
+    needs_document = detected_intent == "DOCUMENT"
+    
     state["needs_doc_search"] = needs_document
     state["reasoning_chain"] = reasoning_chain
+    
     if collection_id:
         state["collection_id"] = collection_id
-
-    active_agents = []
     
-    if needs_document:
-        active_agents.append("document")
-        reasoning_chain.append("Enhanced Coordinator: Will route to document agent")
-    
-    if not active_agents:
-        reasoning_chain.append("Enhanced Coordinator: No specific intent detected, defaulting to document search")
-        active_agents.append("document (default)")
-
-    logger.info(f"[COORDINATOR] Query: '{query}' -> Active agents: {active_agents} -> Domain: {collection_id}")
     return state
 
 def synthesis_agent(state: AgentState) -> AgentState:
-    with trace("synthesis_agent"):
-        """Agent that synthesizes information and generates final response using only the document context."""
-
-        query = state["query"]
-        chat_id = state.get("chat_id")
-        document_context = state.get("document_context", "")
-        chat_mode = state.get("chat_mode", "short")
-
-        context_parts = []
-        if document_context and document_context != "No relevant documents found.":
-            context_parts.append(f"Document Context:\n{document_context}")
-
-        context = "\n\n".join(context_parts) if context_parts else ""
-
-        system_prompt = """You are a helpful AI assistant that provides clear and concise responses.
-Use ONLY the provided document context to answer clearly and accurately.
-Focus on the most important information.
+    """Agent that synthesizes information with conversation context."""
+    
+    query = state["query"]
+    document_context = state.get("document_context", "")
+    previous_context = state.get("previous_context", "")
+    conversation_summary = state.get("conversation_summary", {})
+    
+    # Build comprehensive context
+    context_parts = []
+    
+    # Add conversation history if available
+    if previous_context:
+        context_parts.append(f"Conversation History:\n{previous_context}")
+    
+    # Add entity memory
+    if conversation_summary and conversation_summary.get("entities"):
+        entities_str = "\n".join([
+            f"- {entity_type}: {', '.join(entities[:3])}"
+            for entity_type, entities in conversation_summary["entities"].items()
+        ])
+        context_parts.append(f"Referenced Topics:\n{entities_str}")
+    
+    # Add document context
+    if document_context and document_context != "No relevant documents found.":
+        context_parts.append(f"Document Context:\n{document_context}")
+    
+    context = "\n\n".join(context_parts) if context_parts else ""
+    
+    system_prompt = """You are a helpful AI assistant that provides clear and concise responses.
+Use the provided conversation history and document context to answer clearly and accurately.
 
 IMPORTANT INSTRUCTIONS:
-- Use ONLY the provided document context.
-- If no document context is provided or it doesn't contain the answer, respond with:
-  "I couldn’t find relevant information in the knowledge base."
-- Never use general or world knowledge.
+- First check conversation history for context about pronouns (it, that, they, etc.)
+- Use document context to provide accurate information
+- If the question refers to something mentioned earlier, acknowledge that continuity
+- If no relevant information is available, say so clearly
 """
-
-        if not document_context or document_context == "No relevant documents found.":
-            state["answer"] = "I couldn’t find relevant information in the knowledge base."
-            state["reasoning_chain"].append(
-                "Synthesis Agent: Blocked general knowledge, no relevant documents found."
-            )
-            return state
-
-        try:
-            if not os.getenv("GOOGLE_API_KEY"):
-                response_parts = [
-                    f"Based on the available information:\n\n{context[:1000]}..."
-                ]
-                state["answer"] = "\n".join(response_parts)
-                state["reasoning_chain"].append(
-                    "Synthesis Agent: Used fallback response (no Gemini API key)."
-                )
-                return state
-
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                temperature=0.7,
-                convert_system_message_to_human=True,
-            )
-
-            prompt_content = f"""
+    
+    if not context:
+        state["answer"] = "I couldn't find relevant information to answer your question."
+        state["reasoning_chain"].append("Synthesis Agent: No context available")
+        return state
+    
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            temperature=0.7,
+            convert_system_message_to_human=True,
+        )
+        
+        prompt_content = f"""
 {system_prompt}
+
+{context}
 
 Current User Question: "{query}"
 
-Document Context:
-{context}
-
-Answer ONLY using the document context. If not found, say:
-"I couldn’t find relevant information in the knowledge base."
+Provide a clear, contextual answer using the information above.
 """
-
-            response = llm.invoke([HumanMessage(content=prompt_content)])
-            answer = response.content
-
-            state["answer"] = answer
-            state["reasoning_chain"].append("Synthesis Agent: Used document-only reasoning.")
-            return state
-
-        except Exception as e:
-            response_parts = [
-                f"Error: {str(e)}",
-                f"Based on available context:\n\n{context[:1000]}..."
-            ]
-            state["answer"] = "\n".join(response_parts)
-            state["reasoning_chain"].append(f"Synthesis Agent: Error occurred - {str(e)}")
-            logger.error(f"Synthesis failed: {e}")
-            return state
-
+        
+        response = llm.invoke([HumanMessage(content=prompt_content)])
+        answer = response.content
+        
+        state["answer"] = answer
+        state["reasoning_chain"].append("Synthesis Agent: Used conversation + document context")
+        return state
+        
+    except Exception as e:
+        state["answer"] = f"Error generating response: {str(e)}"
+        state["reasoning_chain"].append(f"Synthesis Agent: Error - {str(e)}")
+        logger.error(f"Synthesis failed: {e}")
+        return state
+    
 
 def should_continue(state: AgentState) -> str:
     with trace("should_continue"):
@@ -420,106 +418,82 @@ async def chat_endpoint(
     domain: str,
     token: str = Depends(token_manager.verify_frontend_token)
 ):
-    with trace("chat_endpoint"):
-        """Main chat endpoint."""
-        try:
-            logger.info(f"[CHAT_ENDPOINT] Received request for domain: '{domain}'")
-            logger.info(f"[CHAT_ENDPOINT] Query: {request.query}")
-            
-            chat_id = request.chat_id or str(uuid.uuid4())
-
-            db = DB(default_config())
-            try:
-                cursor = db.exec(
-                    """
-                    SELECT role, message FROM ask_hr_history
-                    WHERE chat_id = %s
-                    ORDER BY timestamp ASC
-                    """,
-                    (chat_id,)
-                )
-                history_rows = cursor.fetchall() if cursor else []
-            except Exception as db_error:
-                logger.error(f"DB error when loading chat history: {db_error}")
-                history_rows = []
-            finally:
-                db.close()
-
-            history_messages = []
-            for row in history_rows:
-                role = row["role"]
-                content = row["message"]
-                if role == "user":
-                    history_messages.append({"role": "user", "content": content})
-                elif role == "assistant":
-                    history_messages.append({"role": "assistant", "content": content})
-
-            # Get the last 5 user-assistant pairs (10 messages)
-            limited_history = history_messages[-10:] if len(history_messages) > 10 else history_messages
-            messages = convert_history_to_messages(limited_history)
-
-            # Append the current message
-            messages.append(HumanMessage(content=request.query))
-
-            # Create text-based previous context
-            previous_context = "\n".join([
-                f"User: {m['content']}" if m["role"] == "user" else f"Assistant: {m['content']}"
-                for m in limited_history
-            ])
-
-            # Append the current message
-            messages.append(HumanMessage(content=request.query))
-
-            initial_state = AgentState(
-                messages=[HumanMessage(content=request.query)],
-                query=request.query,
-                answer="",
-                sources=[],
-                pages=[],
-                chat_id=chat_id,
-                search_results=None,
-                document_context=None,
-                reasoning_chain=[],
-                previous_context=previous_context,
-                collection_id=domain, 
-            )
-            
-            logger.info(f"[CHAT_ENDPOINT] Initial state collection_id: {initial_state.get('collection_id')}")
-
-            config = {"configurable": {"thread_id": chat_id}}
-            final_state = await asyncio.to_thread(
-                chat_graph.invoke, 
-                initial_state, 
-                config
-            )
-
-            logger.info(f"[CHAT_ENDPOINT] Final state used domain: {final_state.get('collection_id')}")
-            logger.info(f"[CHAT_ENDPOINT] Document found: {final_state.get('document_found')}")
-            logger.info(f"[CHAT_ENDPOINT] Reasoning chain: {final_state.get('reasoning_chain')}")
-
-            if chat_id not in chat_sessions:
-                chat_sessions[chat_id] = {"messages": []}
-            chat_sessions[chat_id]["messages"].extend([
-                {"role": "user", "content": request.query},
-                {"role": "assistant", "content": final_state["answer"]}
-            ])
-            
-            save_chat_to_db(chat_id=chat_id, role="user", message=request.query)
-            save_chat_to_db(chat_id=chat_id, role="assistant", message=final_state["answer"])
-            
-            return ChatResponse(
-                answer=final_state["answer"],
-                sources=final_state.get("sources", []),
-                chat_id=chat_id,
-                reasoning_chain=final_state.get("reasoning_chain", []),
-            )
-            
-        except Exception as e:
-            logger.error(f"[CHAT_ENDPOINT] Chat endpoint error: {e}")
-            import traceback
-            logger.error(f"[CHAT_ENDPOINT] Traceback: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=str(e))
+    """Main chat endpoint with full context support."""
+    try:
+        chat_id = request.chat_id or str(uuid.uuid4())
         
+        # Load history and update entity memory
+        db = DB(default_config())
+        try:
+            cursor = db.exec(
+                "SELECT role, message FROM ask_hr_history WHERE chat_id = %s ORDER BY timestamp ASC",
+                (chat_id,)
+            )
+            history_rows = cursor.fetchall() if cursor else []
+        finally:
+            db.close()
+        
+        # Build conversation context
+        history_messages = []
+        for row in history_rows:
+            role = row["role"]
+            content = row["message"]
+            history_messages.append({"role": role, "content": content})
+            
+            # Update entity memory from history
+            context_manager.update_entity_memory(chat_id, content, role)
+        
+        # Get conversation summary
+        summary = context_manager.get_conversation_summary(chat_id)
+        
+        # Build text-based previous context (last 10 messages)
+        limited_history = history_messages[-10:] if len(history_messages) > 10 else history_messages
+        previous_context = "\n".join([
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in limited_history
+        ])
+        
+        # Create initial state with ALL context
+        initial_state = AgentState(
+            messages=[HumanMessage(content=request.query)],
+            query=request.query,
+            answer="",
+            sources=[],
+            pages=[],
+            chat_id=chat_id,
+            search_results=None,
+            document_context=None,
+            reasoning_chain=[],
+            previous_context=previous_context,  
+            conversation_summary=summary,     
+            collection_id=domain,
+        )
+        
+        config = {"configurable": {"thread_id": chat_id}}
+        final_state = await asyncio.to_thread(chat_graph.invoke, initial_state, config)
+        
+        # Save to DB
+        if chat_id not in chat_sessions:
+            chat_sessions[chat_id] = {"messages": []}
+        
+        chat_sessions[chat_id]["messages"].extend([
+            {"role": "user", "content": request.query},
+            {"role": "assistant", "content": final_state["answer"]}
+        ])
+        
+        save_chat_to_db(chat_id, "user", request.query, domain)
+        save_chat_to_db(chat_id, "assistant", final_state["answer"], domain)
+        
+        return ChatResponse(
+            answer=final_state["answer"],
+            sources=final_state.get("sources", []),
+            chat_id=chat_id,
+            reasoning_chain=final_state.get("reasoning_chain", []),
+        )
+        
+    except Exception as e:
+        logger.error(f"[CHAT_ENDPOINT] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))        
 
 @router.get("/health", tags=["Chat"])
 async def health_check(

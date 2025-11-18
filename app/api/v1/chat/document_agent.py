@@ -20,6 +20,7 @@ import pdfplumber
 import docx
 import io
 import requests
+from .context_manager import context_manager
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
@@ -77,7 +78,7 @@ class HRKBRequest(BaseModel):
 
 class LinkRequest(BaseModel):
     urls: List[HttpUrl]
-    domain: str  # Added domain field
+    domain: str 
     chunk_size: Optional[int] = 1000
     chunk_overlap: Optional[int] = 200
 
@@ -85,7 +86,7 @@ class LinkResponse(BaseModel):
     success: bool
     message: str
     document_id: str
-    domain: str  # Added domain field
+    domain: str  
     title: str
     content_length: int
     chunks_created: int
@@ -95,7 +96,7 @@ class LinkResponse(BaseModel):
 
 class BulkLinkRequest(BaseModel):
     urls: List[HttpUrl]
-    domain: str  # Added domain field
+    domain: str  
     chunk_size: Optional[int] = 1000
     chunk_overlap: Optional[int] = 200
     extract_images: Optional[bool] = False
@@ -107,7 +108,7 @@ class BulkLinkResponse(BaseModel):
     failed: int
     results: List[LinkResponse]
     errors: List[str] = []
-    domain: str  # Added domain field
+    domain: str  
 
 chat_sessions: Dict[str, Dict] = {}
 document_collections: Dict[str, Dict] = {}
@@ -134,30 +135,6 @@ def parse_text(file_bytes: bytes) -> str:
     """Default handler for txt/md/json/etc."""
     return file_bytes.decode("utf-8", errors="ignore")
 
-def save_chat_to_db(chat_id: str, role: str, message: str, domain: str = "default"):
-    """Save chat message to database with domain."""
-    db = None
-    try:
-        db = DB(default_config())
-        cursor = db.conn.cursor()
-
-        logger.info(f"Saving {role} message to DB: chat_id={chat_id}, domain={domain}")
-
-        insert_query = """
-        INSERT INTO virtual_kandy_chat_history_new (chat_id, role, message, domain, timestamp)
-        VALUES (%s, %s, %s, %s, NOW())
-        """
-        cursor.execute(insert_query, (chat_id, role, message, domain))
-        db.conn.commit()
-        
-    except Exception as e:
-        logger.error(f"Error saving message to database: {e}")
-    finally:
-        if db:
-            try:
-                db.close()
-            except:
-                pass
 
 def get_chat_history(chat_id: str, domain: Optional[str] = None):
     """Get chat history from database, optionally filtered by domain."""
@@ -168,14 +145,14 @@ def get_chat_history(chat_id: str, domain: Optional[str] = None):
         
         if domain:
             query = """
-            SELECT role, message FROM virtual_kandy_chat_history_new
+            SELECT role, message FROM ask_hr_history
             WHERE chat_id = %s AND domain = %s
             ORDER BY timestamp ASC
             """
             cursor.execute(query, (chat_id, domain))
         else:
             query = """
-            SELECT role, message FROM virtual_kandy_chat_history_new
+            SELECT role, message FROM ask_hr_history
             WHERE chat_id = %s
             ORDER BY timestamp ASC
             """
@@ -490,45 +467,69 @@ async def list_domain_chunks(
         logger.error(f"Error listing chunks for domain '{domain}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-def document_search_agent(state: AgentState) -> AgentState:
-    """Enhanced document search agent with domain support."""
+def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Document search with context-aware query (already enriched by coordinator)."""
     query = state["query"]
-    domain = state.get("collection_id")
-
-    if domain is None:
-        logger.error(f"[DOCUMENT_AGENT] collection_id is None! State keys: {state.keys()}")
-        logger.error(f"[DOCUMENT_AGENT] Full state: {state}")
-        domain = "default"
-    
+    original_query = state.get("original_query", query)
     chat_id = state.get("chat_id")
+    domain = state.get("collection_id")
+    
+    logger.info(f"[DOC_AGENT] Searching with query: '{query}'")
+    logger.info(f"[DOC_AGENT] Domain: '{domain}'")
 
-    logger.info(f"[DOCUMENT_AGENT] Searching in domain '{domain}' for query: {query}")
-    logger.info(f"[DOCUMENT_AGENT] Full state collection_id: {state.get('collection_id')}")
-
+    is_vague = context_manager.is_followup_question(original_query or query)
+    was_enriched = "[Context:" in query or original_query != query
+    
+    if is_vague and not was_enriched:
+        recent_entities = context_manager.get_recent_entities(chat_id, limit=3)
+        if not recent_entities:
+            state["document_found"] = False
+            state["answer"] = "Your question refers to something from our conversation, but I couldn't find that context. Please provide more details or rephrase your question."
+            state["reasoning_chain"].append("Document Search: Vague query without context - rejected")
+            logger.warning(f"[DOC_AGENT] Rejected vague query without context: '{query}'")
+            return state
+    
+    # Update entity memory from user query
+    context_manager.update_entity_memory(chat_id, query, role="user")
+    
+    # Store domain for continuity
+    if domain:
+        context_manager.update_context("document_agent", "last_domain", domain, chat_id)
+    
+    # Search with the query
+    from api.v1.chat.vectorstore import search_similar
     docs = search_similar(query, domain=domain)
     
-    logger.info(f"[DOCUMENT_AGENT] Found {len(docs)} documents in domain '{domain}'")
-
     if not docs:
         state["document_found"] = False
-        state["reasoning_chain"].append(f"Document Search Agent: No documents found in domain '{domain}'")
-        logger.warning(f"[DOCUMENT_AGENT] No documents found in domain '{domain}'")
+        state["reasoning_chain"].append(f"Document Search: No docs in '{domain}'")
         return state
-
-    # Build context
+    
+    if is_vague:
+        avg_score = sum(doc.get("score", 0) for doc in docs) / len(docs)
+        
+        if avg_score < 0.7:
+            state["document_found"] = False
+            state["answer"] = "I found some documents, but they don't seem relevant to what you're asking about. Could you rephrase or provide more context?"
+            state["reasoning_chain"].append(f"Document Search: Low confidence score ({avg_score:.2f}) - rejected")
+            logger.warning(f"[DOC_AGENT] Low confidence on vague query: score={avg_score:.2f}")
+            return state
+    
+    # Build context from retrieved documents
     context = "\n\n".join(
         [r["payload"]["page_content"] for r in docs if "page_content" in r.get("payload", {})]
     )
-
+    
     if context.strip():
         state["document_context"] = context.strip()
-        state["reasoning_chain"].append(f"Document Search Agent: Retrieved context from domain '{domain}' ({len(docs)} docs)")
+        state["reasoning_chain"].append(f"Document Search: Found {len(docs)} docs in '{domain}'")
         state["sources"] = [r["id"] for r in docs]
         state["document_found"] = True
-        logger.info(f"[DOCUMENT_AGENT] Successfully retrieved context from domain '{domain}'")
+        
+        # Extract entities from documents for future reference
+        context_manager.update_entity_memory(chat_id, context[:500], role="assistant")
     else:
         state["document_found"] = False
-        state["reasoning_chain"].append(f"Document Search Agent: Retrieved docs from domain '{domain}' but no usable text")
-        logger.warning(f"[DOCUMENT_AGENT] Documents found but no usable text in domain '{domain}'")
-
+        state["reasoning_chain"].append(f"Document Search: No usable text in '{domain}'")
+    
     return state
