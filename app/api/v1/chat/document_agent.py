@@ -21,6 +21,14 @@ import docx
 import io
 import requests
 from .context_manager import context_manager
+from fastapi import Query
+import email
+from email import policy
+from email.parser import BytesParser
+from PIL import Image
+import asyncio
+import tempfile
+import base64
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
@@ -117,6 +125,74 @@ collection_documents: Dict[str, List[Dict]] = {}
 search_tool = TavilySearchResults()
 
 logger = logging.getLogger(__name__)
+
+async def gemini_ocr(file_bytes: bytes) -> str:
+    return "Extracted text from Gemini OCR"
+
+
+def build_email_document_structure(msg, body_text: str, attachment_text: str) -> str:
+    from_addr = msg.get("From", "")
+    to_addr = msg.get("To", "")
+    subject = msg.get("Subject", "")
+    sent_on = msg.get("Date", "")
+
+    final_text = f"""
+From: {from_addr}
+Sent on: {sent_on}
+To: {to_addr}
+Subject: {subject}
+
+Body:
+{body_text}
+
+Flyer Text:
+{attachment_text}
+""".strip()
+
+    return final_text
+
+
+async def parse_eml(file_bytes: bytes) -> str:
+    msg = BytesParser(policy=policy.default).parsebytes(file_bytes)
+
+    body = ""
+    attachment_texts = []
+    ocr_tasks = []
+
+    if msg.is_multipart():
+        for part in msg.walk():
+            ctype = part.get_content_type()
+            disp = part.get_content_disposition()
+
+            # Body text
+            if ctype == "text/plain" and disp != "attachment":
+                body += part.get_content() + "\n"
+
+            if ctype == "text/html" and disp != "attachment":
+                soup = BeautifulSoup(part.get_content(), "html.parser")
+                body += soup.get_text() + "\n"
+
+            # Attachments
+            if disp == "attachment":
+                filename = part.get_filename() or ""
+                data = part.get_content()
+
+                if filename.lower().endswith(".pdf"):
+                    attachment_texts.append(parse_pdf(data))
+                elif filename.lower().endswith(".docx"):
+                    attachment_texts.append(parse_docx(data))
+                elif filename.lower().endswith((".png", ".jpg", ".jpeg")):
+                    ocr_tasks.append(gemini_ocr(data))
+
+    if ocr_tasks:
+        ocr_results = await asyncio.gather(*ocr_tasks)
+        attachment_texts.extend(ocr_results)
+
+    return build_email_document_structure(
+        msg,
+        body,
+        "\n".join(attachment_texts)
+    )
 
 def parse_docx(file_bytes: bytes) -> str:
     """Extract text from DOCX file."""
@@ -284,6 +360,8 @@ async def fetch_onedrive_folder_docs(folder_id: str, token: str):
                 file_text = parse_docx(file_bytes)
             elif name.endswith(".pdf"):
                 file_text = parse_pdf(file_bytes)
+            elif name.endswith(".eml"):
+                file_text = await parse_eml(file_bytes)  # New support for emails
             elif name.endswith((".txt", ".md", ".json")):
                 file_text = parse_text(file_bytes)
             else:
