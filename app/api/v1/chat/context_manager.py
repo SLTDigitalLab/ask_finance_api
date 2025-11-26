@@ -167,19 +167,38 @@ class EnhancedContextManager:
 
     def is_followup_question(self, query: str) -> bool:
         """
-        Detect if a query is a follow-up question referring to previous context.
-        """
+        Enhanced detection for follow-up questions.
+       """
         lower_query = query.lower()
-        
-        # Check for vague patterns
+    
+        # Vague patterns
         for pattern in VAGUE_PATTERNS:
             if re.search(pattern, lower_query):
                 return True
+    
+        followup_indicators = [
+               'explain all', 'explain those', 'explain these', 'explain them',
+               'tell me more', 'more about', 'more details', 'more info',
+               'what about', 'how about',
         
-        # Check for short questions without clear subject
-        if len(query.split()) < 5 and any(word in lower_query for word in ['it', 'that', 'this']):
-            return True
+               'above', 'mentioned', 'listed', 'said earlier',
+               'you said', 'you mentioned', 'you listed',
         
+               'explain each', 'detail each', 'break down', 'elaborate',
+               'go deeper', 'in detail', 'specifically',
+        
+               'the points', 'those points', 'these points',
+               'the items', 'those items', 'these items'
+        ]
+    
+        if any(indicator in lower_query for indicator in followup_indicators):
+               return True
+   
+        if len(query.split()) < 5:
+               pronouns = ['it', 'that', 'this', 'those', 'these', 'them']
+               if any(word in lower_query for word in pronouns):
+                   return True
+    
         return False
 
     def enrich_query_with_context(self, chat_id: str, query: str) -> str:

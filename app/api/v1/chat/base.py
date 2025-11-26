@@ -422,38 +422,49 @@ async def chat_endpoint(
     try:
         chat_id = request.chat_id or str(uuid.uuid4())
         
-        # Load history and update entity memory
+        logger.info(f"[CHAT] Processing request for chat_id: {chat_id}, domain: {domain}")
+        logger.info(f"[CHAT] Query: {request.query}")
+        
         db = DB(default_config())
         try:
             cursor = db.exec(
-                "SELECT role, message FROM ask_hr_history WHERE chat_id = %s ORDER BY timestamp ASC",
-                (chat_id,)
+                "SELECT role, message FROM ask_hr_history WHERE chat_id = %s AND domain = %s ORDER BY timestamp ASC",
+                (chat_id, domain)
             )
             history_rows = cursor.fetchall() if cursor else []
+            logger.info(f"[CHAT] Loaded {len(history_rows)} history messages from DB")
         finally:
             db.close()
         
-        # Build conversation context
         history_messages = []
         for row in history_rows:
             role = row["role"]
             content = row["message"]
             history_messages.append({"role": role, "content": content})
             
-            # Update entity memory from history
             context_manager.update_entity_memory(chat_id, content, role)
+            logger.debug(f"[CHAT] Updated entity memory from history: {role}")
         
-        # Get conversation summary
+        context_manager.update_entity_memory(chat_id, request.query, role="user")
+        logger.info(f"[CHAT] Updated entity memory with current query")
+        
         summary = context_manager.get_conversation_summary(chat_id)
+        logger.info(f"[CHAT] Conversation summary entities: {list(summary.get('entities', {}).keys())}")
         
-        # Build text-based previous context (last 10 messages)
+        # Last 10 messages for LLM context
         limited_history = history_messages[-10:] if len(history_messages) > 10 else history_messages
         previous_context = "\n".join([
             f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
             for m in limited_history
         ])
         
-        # Create initial state with ALL context
+        is_followup = context_manager.is_followup_question(request.query)
+        logger.info(f"[CHAT] Is follow-up question: {is_followup}")
+        
+        if is_followup:
+            recent_entities = context_manager.get_recent_entities(chat_id, limit=5)
+            logger.info(f"[CHAT] Recent entities available for enrichment: {recent_entities}")
+        
         initial_state = AgentState(
             messages=[HumanMessage(content=request.query)],
             query=request.query,
@@ -464,15 +475,19 @@ async def chat_endpoint(
             search_results=None,
             document_context=None,
             reasoning_chain=[],
-            previous_context=previous_context,  
-            conversation_summary=summary,     
+            previous_context=previous_context,
+            conversation_summary=summary,
             collection_id=domain,
         )
+        
+        logger.info(f"[CHAT] Initial state created, invoking graph...")
         
         config = {"configurable": {"thread_id": chat_id}}
         final_state = await asyncio.to_thread(chat_graph.invoke, initial_state, config)
         
-        # Save to DB
+        logger.info(f"[CHAT] Graph execution complete")
+        logger.info(f"[CHAT] Answer preview: {final_state['answer'][:100]}...")
+        
         if chat_id not in chat_sessions:
             chat_sessions[chat_id] = {"messages": []}
         
@@ -484,6 +499,11 @@ async def chat_endpoint(
         save_chat_to_db(chat_id, "user", request.query, domain)
         save_chat_to_db(chat_id, "assistant", final_state["answer"], domain)
         
+        context_manager.update_entity_memory(chat_id, final_state["answer"], role="assistant")
+        logger.info(f"[CHAT] Updated entity memory with assistant response")
+        
+        logger.info(f"[CHAT] Request complete for chat_id: {chat_id}")
+        
         return ChatResponse(
             answer=final_state["answer"],
             sources=final_state.get("sources", []),
@@ -493,7 +513,8 @@ async def chat_endpoint(
         
     except Exception as e:
         logger.error(f"[CHAT_ENDPOINT] Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))        
+        logger.error(f"[CHAT_ENDPOINT] Traceback: ", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health", tags=["Chat"])
 async def health_check(

@@ -467,139 +467,96 @@ async def list_domain_chunks(
         logger.error(f"Error listing chunks for domain '{domain}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Document search with intelligent caching for ANY follow-up question.
-    
-    Caching Strategy:
-    - Level 1: Cache retrieved document content (for questions about "that document")
-    - Level 2: Cache last assistant answer (for questions about "explain above")
+    Document search with intelligent caching for follow-up questions.
     """
     query = state["query"]
     original_query = state.get("original_query", query)
     chat_id = state.get("chat_id")
     domain = state.get("collection_id")
     
-    logger.info(f"[DOC_AGENT] Query: '{original_query}'")
+    logger.info(f"[DOC_AGENT] Processing query: '{original_query}'")
 
     is_vague = context_manager.is_followup_question(original_query or query)
     
-    # Get cached data
+    last_doc_ids = context_manager.get_context("document_agent", "last_document_ids", chat_id)
     last_doc_content = context_manager.get_context("document_agent", "last_document_content", chat_id)
-    last_answer = context_manager.get_last_answer_snippet(chat_id, max_length=1000)
     
-    logger.info(f"[DOC_AGENT] Is vague: {is_vague}")
-    logger.info(f"[DOC_AGENT] Has cached doc: {last_doc_content is not None}")
-    logger.info(f"[DOC_AGENT] Has last answer: {last_answer is not None}")
-    
-    followup_type = None
-    
+    refers_to_same_doc = False
     if is_vague:
         query_lower = original_query.lower()
-        
-        document_refs = [
+        same_doc_patterns = [
             "that document", "this document", "the document",
             "what does it say", "what does it contain", "what's in it",
-            "document content", "document policy"
+            "its policy", "its content", "what are the things in",
+            "tell me about it", "explain it", "more about it"
         ]
         
-        if any(ref in query_lower for ref in document_refs):
-            followup_type = "DOCUMENT_SPECIFIC"
-            logger.info(f"[DOC_AGENT] Follow-up type: DOCUMENT_SPECIFIC")
+        refers_to_same_doc = any(pattern in query_lower for pattern in same_doc_patterns)
         
-        elif any(word in query_lower for word in ['explain', 'elaborate', 'detail', 'more about']):
-            answer_refs = [
-                'explain all', 'explain those', 'explain these', 'explain them',
-                'explain above', 'above thing', 'above mentioned',
-                'tell me more', 'more details', 'elaborate',
-                'break down', 'go deeper'
-            ]
-            
-            if any(ref in query_lower for ref in answer_refs):
-                followup_type = "ANSWER_ELABORATION"
-                logger.info(f"[DOC_AGENT] Follow-up type: ANSWER_ELABORATION")
-        
-        elif len(original_query.split()) <= 5:
-            if any(word in query_lower for word in ['it', 'them', 'those', 'these']):
-                followup_type = "GENERIC_VAGUE"
-                logger.info(f"[DOC_AGENT] Follow-up type: GENERIC_VAGUE")
+        logger.info(f"[DOC_AGENT] Refers to same document: {refers_to_same_doc}")
     
-    if followup_type == "DOCUMENT_SPECIFIC" and last_doc_content:
-        logger.info(f"[DOC_AGENT] ✓ Strategy 1: Reusing cached document content")
+    if refers_to_same_doc and last_doc_content:
+        logger.info(f"[DOC_AGENT] ✓ Reusing cached document content from previous query")
         
         state["document_context"] = last_doc_content
         state["document_found"] = True
-        state["sources"] = context_manager.get_context("document_agent", "last_document_ids", chat_id) or []
-        state["reasoning_chain"].append("Document Search: Reused cached document (document-specific follow-up)")
+        state["sources"] = last_doc_ids or []
+        state["reasoning_chain"].append(
+            "Document Search: Reused document from previous query (follow-up detected)"
+        )
         
+        # Update entity memory with current query
         context_manager.update_entity_memory(chat_id, query, role="user")
+        
         return state
     
-    if followup_type == "ANSWER_ELABORATION" and last_doc_content:
-        logger.info(f"[DOC_AGENT] ✓ Strategy 2: Reusing document for answer elaboration")
-        
-        # Add the previous answer as additional context
-        combined_context = last_doc_content
-        
-        if last_answer:
-            combined_context = f"Previous Answer:\n{last_answer}\n\n---\n\nOriginal Document Content:\n{last_doc_content}"
-        
-        state["document_context"] = combined_context
-        state["document_found"] = True
-        state["sources"] = context_manager.get_context("document_agent", "last_document_ids", chat_id) or []
-        state["reasoning_chain"].append("Document Search: Reused document + previous answer (elaboration request)")
-        
-        context_manager.update_entity_memory(chat_id, query, role="user")
-        return state
+    logger.info(f"[DOC_AGENT] Performing new document search")
     
-    if followup_type == "GENERIC_VAGUE" and last_doc_content:
-        logger.info(f"[DOC_AGENT] ✓ Strategy 3: Attempting to reuse for generic vague query")
-        
-        state["document_context"] = last_doc_content
-        state["document_found"] = True
-        state["sources"] = context_manager.get_context("document_agent", "last_document_ids", chat_id) or []
-        state["reasoning_chain"].append("Document Search: Reused cached document (generic follow-up)")
-        
-        context_manager.update_entity_memory(chat_id, query, role="user")
-        return state
-    
-    logger.info(f"[DOC_AGENT] Strategy 4: Performing new document search")
-    
-    # Extract entities
+    # Extract document codes
     entities = context_manager.extract_entities(query)
     doc_codes = entities.get("CUSTOM", [])
     
     if not doc_codes and is_vague:
+        # Try to get document codes from recent entities
         recent_entities = context_manager.get_recent_entities(chat_id, limit=5)
         doc_codes = [e for e in recent_entities if any(char.isdigit() for char in e)]
-        logger.info(f"[DOC_AGENT] Document codes from context: {doc_codes}")
+        
+        if doc_codes:
+            logger.info(f"[DOC_AGENT] Using document codes from context: {doc_codes}")
     
-    # Multi-strategy search
     all_docs = []
     
     if doc_codes:
         for doc_code in doc_codes[:2]:
+            logger.info(f"[DOC_AGENT] Searching for: '{doc_code}'")
             docs = search_similar(doc_code, domain=domain, limit=5)
             if docs:
                 all_docs.extend(docs)
+                logger.info(f"[DOC_AGENT] Found {len(docs)} docs for '{doc_code}'")
     
     if len(all_docs) == 0:
+        logger.info(f"[DOC_AGENT] Searching with original query: '{original_query}'")
         docs = search_similar(original_query, domain=domain, limit=5)
         if docs:
             all_docs.extend(docs)
+            logger.info(f"[DOC_AGENT] Found {len(docs)} docs with original query")
     
     if len(all_docs) == 0 and query != original_query:
+        logger.info(f"[DOC_AGENT] Fallback: searching with enriched query")
         docs = search_similar(query, domain=domain, limit=5)
         if docs:
             all_docs.extend(docs)
+            logger.info(f"[DOC_AGENT] Found {len(docs)} docs with enriched query")
     
     if not all_docs:
         state["document_found"] = False
         state["reasoning_chain"].append("Document Search: No documents found")
+        logger.warning(f"[DOC_AGENT] No documents found for query")
         return state
     
-    # Deduplicate and sort
+    # Deduplicate by ID
     seen = set()
     unique_docs = []
     for doc in all_docs:
@@ -608,22 +565,27 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             seen.add(doc_id)
             unique_docs.append(doc)
     
+    # Sort by score
     unique_docs.sort(key=lambda x: x.get('score', 0), reverse=True)
     
-    # Log top results
-    logger.info(f"[DOC_AGENT] Top 3 results:")
+    # Log results
+    logger.info(f"[DOC_AGENT] Top 3 unique documents:")
     for i, doc in enumerate(unique_docs[:3], 1):
         score = doc.get('score', 0)
         preview = doc.get('payload', {}).get('page_content', '')[:80]
         logger.info(f"  [{i}] Score: {score:.3f} | {preview}...")
     
-    # Quality checks
+    # Quality check
     top_score = unique_docs[0].get('score', 0)
     
-    # Document code verification
     if doc_codes:
         top_content = unique_docs[0].get('payload', {}).get('page_content', '').upper()
-        if not any(code.upper() in top_content for code in doc_codes):
+        code_found = any(code.upper() in top_content for code in doc_codes)
+        
+        if not code_found:
+            logger.warning(f"[DOC_AGENT] Document code not in top result, filtering...")
+            
+            # Filter to only docs with the code
             filtered = [
                 doc for doc in unique_docs
                 if any(code.upper() in doc.get('payload', {}).get('page_content', '').upper() 
@@ -632,58 +594,46 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             
             if filtered:
                 unique_docs = filtered
+                logger.info(f"[DOC_AGENT] Filtered to {len(filtered)} docs with code")
             else:
                 state["document_found"] = False
                 state["answer"] = f"I couldn't find document '{doc_codes[0]}' in the system."
+                state["reasoning_chain"].append(f"Document Search: Code '{doc_codes[0]}' not found")
                 return state
     
-    # Confidence check
+    # Check confidence for vague queries
     if is_vague and top_score < 0.6 and not doc_codes:
         state["document_found"] = False
-        state["answer"] = f"I found documents but they don't seem very relevant. Please provide more details."
+        state["answer"] = f"I found some documents but they don't seem very relevant (confidence: {top_score:.0%}). Please provide more details."
+        state["reasoning_chain"].append(f"Document Search: Low confidence ({top_score:.2f})")
         return state
     
-    # Build context with quality filtering
+    # Build context from top 5 documents
     top_docs = unique_docs[:5]
-    raw_contexts = []
+    context = "\n\n".join([
+        doc.get('payload', {}).get('page_content', '')
+        for doc in top_docs
+        if doc.get('payload', {}).get('page_content')
+    ])
     
-    for doc in top_docs:
-        content = doc.get('payload', {}).get('page_content', '')
-        if content:
-            # Check readability
-            readable_chars = sum(1 for c in content if c.isprintable() or c.isspace())
-            total_chars = len(content)
-            
-            if total_chars > 0 and (readable_chars / total_chars) > 0.7:
-                raw_contexts.append(content)
-            else:
-                logger.warning(f"[DOC_AGENT] Skipping garbled content")
-    
-    if not raw_contexts:
+    if not context.strip():
         state["document_found"] = False
-        state["answer"] = "I found documents but the content appears to be corrupted. Please check if documents were uploaded correctly."
+        state["reasoning_chain"].append("Document Search: No text content in documents")
         return state
     
-    context = "\n\n".join(raw_contexts)
-    
-    # Cache for future follow-ups
-    doc_ids = [doc.get('id') for doc in top_docs if any(
-        doc.get('id') == d.get('id') 
-        for d in [doc for doc in top_docs 
-                 if (doc.get('payload', {}).get('page_content', '') in raw_contexts)]
-    )]
+    doc_ids = [doc.get('id') for doc in top_docs]
     
     context_manager.update_context("document_agent", "last_document_ids", doc_ids, chat_id)
     context_manager.update_context("document_agent", "last_document_content", context, chat_id)
     context_manager.update_context("document_agent", "last_query", original_query, chat_id)
     
-    logger.info(f"[DOC_AGENT] ✓ Cached {len(top_docs)} documents")
+    logger.info(f"[DOC_AGENT] ✓ Cached {len(top_docs)} documents for future follow-ups")
     
     # Update state
     state["document_context"] = context.strip()
     state["document_found"] = True
     state["sources"] = doc_ids
-    state["reasoning_chain"].append(f"Document Search: Retrieved {len(top_docs)} new documents")
+    state["reasoning_chain"].append(f"Document Search: Retrieved {len(top_docs)} documents")
     
     # Update entity memory
     context_manager.update_entity_memory(chat_id, query, role="user")
