@@ -82,7 +82,7 @@ except Exception as e:
     embeddings = None
 
 # Initialize search
-search_tool = TavilySearch()
+# search_tool = TavilySearch()
 
 def get_default_collection_id() -> Optional[str]:
     """Get the most recently created collection ID as default."""
@@ -178,16 +178,17 @@ def route_to_specific_agent(state: AgentState) -> str:
     
     logger.info(f"[ROUTER] Routing query: {query}")
     logger.info(f"[ROUTER] Collection ID in state: {collection_id}")
+    return "document_search_agent"
     
-    # Use enhanced intent detector with destination context
-    detected_intent = detect_intent_with_context(query)
+    # # Use enhanced intent detector with destination context
+    # detected_intent = detect_intent_with_context(query)
 
-    if detected_intent == "DOCUMENT":
-        logger.info(f"[ROUTER] Routing to document_search_agent for domain: {collection_id}")
-        return "document_search_agent"
-    else:
-        logger.info(f"[ROUTER] Defaulting to document_search_agent for domain: {collection_id}")
-        return "document_search_agent"
+    # if detected_intent == "DOCUMENT":
+    #     logger.info(f"[ROUTER] Routing to document_search_agent for domain: {collection_id}")
+    #     return "document_search_agent"
+    # else:
+    #     logger.info(f"[ROUTER] Defaulting to document_search_agent for domain: {collection_id}")
+    #     return "document_search_agent"
     
 def save_chat_to_db(chat_id: str, role: str, message: str, domain: str = "default"):
     """Save chat message to database with domain."""
@@ -263,8 +264,9 @@ def coordinator_agent(state: AgentState) -> AgentState:
     
     reasoning_chain = ["Coordinator: Analyzing query and routing to appropriate agents"]
     
-    detected_intent = detect_intent(state["query"]) 
-    needs_document = detected_intent == "DOCUMENT"
+    # detected_intent = detect_intent(state["query"]) 
+    # needs_document = detected_intent == "DOCUMENT"
+    needs_document = "DOCUMENT"
     
     state["needs_doc_search"] = needs_document
     state["reasoning_chain"] = reasoning_chain
@@ -281,6 +283,15 @@ def synthesis_agent(state: AgentState) -> AgentState:
     document_context = state.get("document_context", "")
     previous_context = state.get("previous_context", "")
     conversation_summary = state.get("conversation_summary", {})
+
+    logger.info("======================")
+    logger.info(str(document_context))
+
+    res = search_similar(query, domain=state.get("collection_id"))
+    document_context = " ".join(
+        item["payload"].get("page_content", "") 
+        for item in res if "payload" in item
+    ).strip()
     
     # Build comprehensive context
     context_parts = []
@@ -302,6 +313,9 @@ def synthesis_agent(state: AgentState) -> AgentState:
         context_parts.append(f"Document Context:\n{document_context}")
     
     context = "\n\n".join(context_parts) if context_parts else ""
+
+    logger.info("========================")
+    logger.info(context)
     
     system_prompt = """You are a helpful AI assistant that provides clear and concise responses.
 Use the provided conversation history and document context to answer clearly and accurately.
@@ -416,7 +430,7 @@ def get_or_create_chat_session(chat_id: str = None) -> str:
 async def chat_endpoint(
     request: ChatRequest,
     domain: str,
-    token: str = Depends(token_manager.verify_frontend_token)
+    # token: str = Depends(token_manager.verify_frontend_token)
 ):
     """Main chat endpoint with full context support."""
     try:
@@ -518,14 +532,14 @@ async def chat_endpoint(
 
 @router.get("/health", tags=["Chat"])
 async def health_check(
-    token: str = Depends(verify_token)
+    # token: str = Depends(verify_token)
 ):
     """Health check endpoint."""
     return {"status": "healthy. Lets start", "timestamp": datetime.now()}
 
 @router.get("/debug/check-data", tags=["Database"])
 async def debug_check_data(
-    token: str = Depends(verify_token)
+    # token: str = Depends(verify_token)
 ):
     """Simple check to see what's in the database."""
     try:
@@ -556,7 +570,7 @@ async def debug_check_data(
 
 @router.get("/sessions", tags=["Database"])
 async def get_all_chat_sessions(
-    token: str = Depends(verify_token)
+    # token: str = Depends(verify_token)
 ):
     """Get all unique chat session IDs from the database."""
     try:
@@ -612,7 +626,7 @@ async def get_all_chat_sessions(
 @router.get("/session/{session_id}/history", tags=["Database"])
 async def get_session_history(
     session_id: str,
-    token: str = Depends(verify_token)
+    # token: str = Depends(verify_token)
     ):
     """Get chat history for a specific session ID."""
     try:
@@ -644,7 +658,7 @@ async def get_session_history(
 @router.delete("/session/{session_id}", tags=["Database"])
 async def delete_session(
     session_id: str,
-    token: str = Depends(token_manager.verify_admin_token)
+    # token: str = Depends(token_manager.verify_admin_token)
     ):
     """Delete all messages for a specific session ID."""
     try:
