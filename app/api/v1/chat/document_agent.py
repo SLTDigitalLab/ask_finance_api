@@ -39,7 +39,7 @@ from google.genai import types
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
-GEMINI_OCR_URL = "https://api.gemini.ai/v1/vision/ocr"  # Replace with actual Gemini OCR endpoint if different
+GEMINI_OCR_URL = "https://api.gemini.ai/v1/vision/ocr"  
 
 logger = logging.getLogger(__name__)
 
