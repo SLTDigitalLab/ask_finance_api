@@ -18,3 +18,6 @@ class AgentState(TypedDict):
     booking_details: Optional[Dict]
     booking_options: Optional[Dict]
     collection_id: Optional[str]
+    document_names: List[str]
+    onedrive_urls: List[str]
+    has_reference: bool

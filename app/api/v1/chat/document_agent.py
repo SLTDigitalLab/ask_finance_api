@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Form, HTTPException, Depends
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, HttpUrl
 from typing import Dict, List, Optional
@@ -78,7 +78,8 @@ class DomainResponse(BaseModel):
     points_count: Optional[int] = None
 
 class HRKBRequest(BaseModel):
-    folder_id: str
+    folder_id: Optional[str] = None
+    share_id: Optional[str] = None
     token: str
     domain: str = "hr"
     chunk_size: Optional[int] = 1000
@@ -195,21 +196,36 @@ async def parse_eml(file_bytes: bytes) -> str:
     )
 
 def parse_docx(file_bytes: bytes) -> str:
-    """Extract text from DOCX file."""
-    doc = docx.Document(io.BytesIO(file_bytes))
-    return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+    """Extract text from DOCX file with error handling."""
+    try:
+        doc = docx.Document(io.BytesIO(file_bytes))
+        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+    except Exception as e:
+        logger.warning(f"DOCX parsing error: {e}")
+        return ""
 
 def parse_pdf(file_bytes: bytes) -> str:
-    """Extract text from PDF file."""
+    """Extract text from PDF file with error handling."""
     text = ""
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() or ""
-    return text
+    try:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                text += page_text + "\n"
+    except Exception as e:
+        logger.warning(f"PDF parsing error: {e}")
+        # Return empty string - caller will skip this file
+        return ""
+    
+    return text.strip()
 
 def parse_text(file_bytes: bytes) -> str:
-    """Default handler for txt/md/json/etc."""
-    return file_bytes.decode("utf-8", errors="ignore")
+    """Extract text from text files with error handling."""
+    try:
+        return file_bytes.decode("utf-8", errors="ignore")
+    except Exception as e:
+        logger.warning(f"Text parsing error: {e}")
+        return ""
 
 
 def get_chat_history(chat_id: str, domain: Optional[str] = None):
@@ -338,42 +354,112 @@ async def fetch_page_content(session: aiohttp.ClientSession, url: str) -> tuple[
         logger.error(f"Error processing {url}: {e}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
-async def fetch_onedrive_folder_docs(folder_id: str, token: str):
+async def fetch_onedrive_folder_docs(folder_id: str = None, token: str = None, share_id: str = None):
     """Fetch all files in a OneDrive folder and extract their text."""
-    url = f"{GRAPH_URL}/me/drive/items/{folder_id}/children"
+    
+    if share_id:
+        url = f"{GRAPH_URL}/shares/{share_id}/driveItem/children"
+    elif folder_id:
+        url = f"{GRAPH_URL}/me/drive/items/{folder_id}/children"
+    else:
+        raise ValueError("Either folder_id or share_id must be provided")
+    
     headers = {"Authorization": f"Bearer {token}"}
 
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=60)
     response.raise_for_status()
     items = response.json().get("value", [])
-
+    
+    logger.info(f"Found {len(items)} items to process")
+    
+    # Log all files that will be processed
+    if items:
+        logger.info("Files to process:")
+        for i, item in enumerate(items):
+            logger.info(f"  {i+1}: {item.get('name', 'Unknown')}")
+    
     docs = []
+    processed_count = 0
+    error_count = 0
+    
     for item in items:
-        if "@microsoft.graph.downloadUrl" in item:
+        try:
+            item_name = item.get("name", "Unknown")
+            logger.info(f"Processing: {item_name}")
+            
+            if "@microsoft.graph.downloadUrl" not in item:
+                logger.warning(f"Skipping {item_name} - no download URL")
+                error_count += 1
+                continue
+            
             download_url = item["@microsoft.graph.downloadUrl"]
-            file_resp = requests.get(download_url)
+            logger.info(f"  Downloading from: {download_url[:50]}...")
+            
+            file_resp = requests.get(download_url, timeout=30)
             file_resp.raise_for_status()
             file_bytes = file_resp.content
-            name = item["name"].lower()
+            name = item_name.lower()
+            
+            logger.info(f"  File size: {len(file_bytes)} bytes")
+            logger.info(f"  File type: {name.split('.')[-1] if '.' in name else 'unknown'}")
 
-            if name.endswith(".docx"):
-                file_text = parse_docx(file_bytes)
-            elif name.endswith(".pdf"):
-                file_text = parse_pdf(file_bytes)
-            elif name.endswith(".eml"):
-                file_text = await parse_eml(file_bytes)  # New support for emails
-            elif name.endswith((".txt", ".md", ".json")):
-                file_text = parse_text(file_bytes)
-            else:
-                logger.warning(f"Skipping unsupported file type: {item['name']}")
+            file_text = ""
+            
+            # Parse with error handling for each file type
+            try:
+                if name.endswith(".docx"):
+                    logger.info("  Parsing as DOCX")
+                    file_text = parse_docx(file_bytes)
+                elif name.endswith(".pdf"):
+                    logger.info("  Parsing as PDF")
+                    file_text = parse_pdf(file_bytes)
+                elif name.endswith(".eml"):
+                    logger.info("  Parsing as EML")
+                    file_text = await parse_eml(file_bytes)
+                elif name.endswith((".txt", ".md", ".json")):
+                    logger.info(f"  Parsing as {name.split('.')[-1].upper()}")
+                    file_text = parse_text(file_bytes)
+                else:
+                    logger.warning(f"Skipping unsupported file type: {item_name}")
+                    error_count += 1
+                    continue
+            except Exception as parse_error:
+                logger.error(f"Error parsing {item_name}: {parse_error}")
+                error_count += 1
                 continue
 
-            if file_text.strip():
-                docs.append({
-                    "id": item["id"],
-                    "name": item["name"],
-                    "content": file_text
-                })
+            if not file_text or not file_text.strip():
+                logger.warning(f"Skipping {item_name} - empty content")
+                error_count += 1
+                continue
+            
+            logger.info(f"  Extracted {len(file_text)} characters")
+            
+            # Log a preview of the content
+            if file_text:
+                preview = file_text[:100].replace('\n', ' ')
+                logger.info(f"  Content preview: {preview}...")
+
+            docs.append({
+                "id": item["id"],
+                "name": item_name,
+                "content": file_text,
+                "web_url": item.get("webUrl"),
+                "share_id": item.get("shareId"),
+            })
+            processed_count += 1
+            logger.info(f"✅ Successfully processed: {item_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing {item.get('name', 'Unknown')}: {e}")
+            error_count += 1
+            continue
+
+    logger.info(f"Processing complete: {processed_count} successful, {error_count} failed")
+    
+    if processed_count == 0 and error_count > 0:
+        logger.warning("No files were successfully processed!")
+    
     return docs
 
 def chunk_content(content: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
@@ -501,22 +587,48 @@ async def add_data_to_collection(
 async def add_hr_kb_to_collection(
     request: HRKBRequest,
 ):
-    """Add OneDrive documents to a specific domain."""
+    """Add OneDrive documents to a specific domain with OneDrive IDs."""
     result = {"status": "", "message": "", "domain": request.domain}
 
     try:
-        docs = await fetch_onedrive_folder_docs(request.folder_id, request.token)
+        docs = await fetch_onedrive_folder_docs(request.folder_id, request.token, share_id=request.share_id)
         
         if not docs:
-            return {"status": "failed", "message": "No documents found in OneDrive folder", "domain": request.domain}
+            result["status"] = "failed"
+            result["message"] = "No documents found in OneDrive folder"
+            return result
 
         all_chunks = []
+        document_names = []
+        onedrive_ids = []
+        onedrive_urls = []
+        
         for doc in docs:
             chunks = chunk_content(doc["content"], request.chunk_size, request.chunk_overlap)
             all_chunks.extend(chunks)
-            logger.info(f"Processed OneDrive file {doc['name']} into {len(chunks)} chunks")
+            
+            # Add document metadata for each chunk
+            document_names.extend([doc["name"]] * len(chunks))
+            onedrive_ids.extend([doc["id"]] * len(chunks))
+            
+            # Try to get the web URL, fallback to constructing one
+            if doc.get("web_url"):
+                onedrive_urls.extend([doc["web_url"]] * len(chunks))
+            else:
+                # Construct a web URL from the ID
+                web_url = f"https://onedrive.live.com/?id={doc['id']}&cid=7E1063C6DE897DDC"
+                onedrive_urls.extend([web_url] * len(chunks))
+            
+            logger.info(f"Processed OneDrive file {doc['name']} (ID: {doc['id']}) into {len(chunks)} chunks")
 
-        upsert_result = add_texts(all_chunks, domain=request.domain)
+        # Pass OneDrive IDs and URLs to add_texts
+        upsert_result = add_texts(
+            all_chunks, 
+            domain=request.domain,
+            document_names=document_names,
+            onedrive_ids=onedrive_ids,
+            onedrive_urls=onedrive_urls
+        )
 
         result["status"] = "success"
         result["message"] = f"Inserted {len(all_chunks)} chunks from {len(docs)} OneDrive docs to domain '{request.domain}'"
@@ -548,7 +660,7 @@ async def list_domain_chunks(
 
 def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Document search with intelligent caching for ANY follow-up question.
+    Document search with intelligent caching for ANY follow-up question and document name extraction for reference preview.
     
     Caching Strategy:
     - Level 1: Cache retrieved document content (for questions about "that document")
@@ -560,6 +672,35 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     domain = state.get("collection_id")
     
     logger.info(f"[DOC_AGENT] Query: '{original_query}'")
+    logger.info(f"[DOC_AGENT] Domain: '{domain}'")
+
+    # Check if this is a simple greeting that shouldn't have references
+    is_simple_greeting = any(
+        greeting in original_query.lower() 
+        for greeting in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "how are you"]
+    )
+
+    # Check for personal info queries
+    personal_info_keywords = [
+        "my name", "your name", "who am i", "who are you", "i am", "my age",
+        "my birthday", "my details", "personal information", "about me"
+    ]
+    
+    is_personal_info_query = any(
+        keyword in original_query.lower() 
+        for keyword in personal_info_keywords
+    )
+    
+    # Clear any previous references for simple greetings or personal info
+    if is_simple_greeting or is_personal_info_query:
+        logger.info(f"[DOC_AGENT] {'Simple greeting' if is_simple_greeting else 'Personal info query'} detected - clearing all document references")
+        state["document_context"] = ""
+        state["document_names"] = []
+        state["onedrive_urls"] = []
+        state["has_reference"] = False
+        state["document_found"] = False
+        state["reasoning_chain"].append(f"Document Search: {'Simple greeting' if is_simple_greeting else 'Personal info query'} - no document search needed")
+        return state
 
     is_vague = context_manager.is_followup_question(original_query or query)
     
@@ -569,7 +710,6 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info(f"[DOC_AGENT] Is vague: {is_vague}")
     logger.info(f"[DOC_AGENT] Has cached doc: {last_doc_content is not None}")
-    logger.info(f"[DOC_AGENT] Has last answer: {last_answer is not None}")
     
     followup_type = None
     
@@ -605,10 +745,17 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     
     if followup_type == "DOCUMENT_SPECIFIC" and last_doc_content:
         logger.info(f"[DOC_AGENT] ✓ Strategy 1: Reusing cached document content")
-        
+
+        # Get cached document names and URLs
+        cached_names = context_manager.get_context("document_agent", "last_document_names", chat_id) or []
+        cached_urls = context_manager.get_context("document_agent", "last_onedrive_urls", chat_id) or []
+
         state["document_context"] = last_doc_content
         state["document_found"] = True
         state["sources"] = context_manager.get_context("document_agent", "last_document_ids", chat_id) or []
+        state["document_names"] = cached_names
+        state["onedrive_urls"] = cached_urls
+        state["has_reference"] = len(cached_names) > 0
         state["reasoning_chain"].append("Document Search: Reused cached document (document-specific follow-up)")
         
         context_manager.update_entity_memory(chat_id, query, role="user")
@@ -616,6 +763,10 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     
     if followup_type == "ANSWER_ELABORATION" and last_doc_content:
         logger.info(f"[DOC_AGENT] ✓ Strategy 2: Reusing document for answer elaboration")
+
+        # Get cached document names and URLs
+        cached_names = context_manager.get_context("document_agent", "last_document_names", chat_id) or []
+        cached_urls = context_manager.get_context("document_agent", "last_onedrive_urls", chat_id) or []
         
         # Add the previous answer as additional context
         combined_context = last_doc_content
@@ -626,6 +777,9 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         state["document_context"] = combined_context
         state["document_found"] = True
         state["sources"] = context_manager.get_context("document_agent", "last_document_ids", chat_id) or []
+        state["document_names"] = cached_names
+        state["onedrive_urls"] = cached_urls
+        state["has_reference"] = len(cached_names) > 0
         state["reasoning_chain"].append("Document Search: Reused document + previous answer (elaboration request)")
         
         context_manager.update_entity_memory(chat_id, query, role="user")
@@ -634,9 +788,16 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     if followup_type == "GENERIC_VAGUE" and last_doc_content:
         logger.info(f"[DOC_AGENT] ✓ Strategy 3: Attempting to reuse for generic vague query")
         
+        # Get cached document names and URLs
+        cached_names = context_manager.get_context("document_agent", "last_document_names", chat_id) or []
+        cached_urls = context_manager.get_context("document_agent", "last_onedrive_urls", chat_id) or []
+        
         state["document_context"] = last_doc_content
         state["document_found"] = True
         state["sources"] = context_manager.get_context("document_agent", "last_document_ids", chat_id) or []
+        state["document_names"] = cached_names
+        state["onedrive_urls"] = cached_urls
+        state["has_reference"] = len(cached_names) > 0
         state["reasoning_chain"].append("Document Search: Reused cached document (generic follow-up)")
         
         context_manager.update_entity_memory(chat_id, query, role="user")
@@ -667,13 +828,35 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         if docs:
             all_docs.extend(docs)
     
-    if len(all_docs) == 0 and query != original_query:
-        docs = search_similar(query, domain=domain, limit=5)
-        if docs:
-            all_docs.extend(docs)
+    if len(all_docs) == 0:
+        # Try case-insensitive search for document names
+        # Extract potential document names from query
+        query_words = original_query.lower().split()
+        potential_doc_names = []
+        
+        # Look for phrases that might be document titles
+        for i in range(len(query_words)):
+            for j in range(i+1, min(i+5, len(query_words))):  # Look for 2-5 word phrases
+                phrase = " ".join(query_words[i:j+1])
+                # Check if this phrase might be a document title
+                if len(phrase) > 3 and not phrase in ["the", "and", "for", "with", "about"]:
+                    potential_doc_names.append(phrase)
+        
+        # Search for each potential document name
+        for doc_name in potential_doc_names[:3]:  # Limit to top 3
+            docs = search_similar(doc_name, domain=domain, limit=3)
+            if docs:
+                all_docs.extend(docs)
+                logger.info(f"[DOC_AGENT] Found documents using phrase: '{doc_name}'")
+    
+    logger.info(f"[DOC_AGENT] Search returned {len(all_docs)} documents")
     
     if not all_docs:
+        logger.error("[DOC_AGENT] ERROR: No documents found in search!")
         state["document_found"] = False
+        state["has_reference"] = False
+        state["document_names"] = []
+        state["onedrive_urls"] = []
         state["reasoning_chain"].append("Document Search: No documents found")
         return state
     
@@ -688,79 +871,145 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     
     unique_docs.sort(key=lambda x: x.get('score', 0), reverse=True)
     
-    # Log top results
-    logger.info(f"[DOC_AGENT] Top 3 results:")
-    for i, doc in enumerate(unique_docs[:3], 1):
+    # Log detailed info about top docs
+    logger.info(f"[DOC_AGENT] Top {len(unique_docs[:5])} unique documents:")
+    for i, doc in enumerate(unique_docs[:5], 1):
         score = doc.get('score', 0)
-        preview = doc.get('payload', {}).get('page_content', '')[:80]
-        logger.info(f"  [{i}] Score: {score:.3f} | {preview}...")
+        content = doc.get('payload', {}).get('page_content', '')
+        doc_name = doc.get('payload', {}).get('document_name', 'Unknown')
+        onedrive_url = doc.get('payload', {}).get('onedrive_url', 'No URL')
+        logger.info(f"  [{i}] Score: {score:.3f}")
+        logger.info(f"      Doc: {doc_name}")
+        logger.info(f"      URL: {onedrive_url}")
+        logger.info(f"      Content preview: {content[:100]}...")
+        logger.info(f"      Content length: {len(content)} chars")
     
-    # Quality checks
-    top_score = unique_docs[0].get('score', 0)
-    
-    # Document code verification
-    if doc_codes:
-        top_content = unique_docs[0].get('payload', {}).get('page_content', '').upper()
-        if not any(code.upper() in top_content for code in doc_codes):
-            filtered = [
-                doc for doc in unique_docs
-                if any(code.upper() in doc.get('payload', {}).get('page_content', '').upper() 
-                       for code in doc_codes)
-            ]
-            
-            if filtered:
-                unique_docs = filtered
-            else:
-                state["document_found"] = False
-                state["answer"] = f"I couldn't find document '{doc_codes[0]}' in the system."
-                return state
-    
-    # Confidence check
-    if is_vague and top_score < 0.6 and not doc_codes:
-        state["document_found"] = False
-        state["answer"] = f"I found documents but they don't seem very relevant. Please provide more details."
-        return state
-    
-    # Build context with quality filtering
+    # Build context
     top_docs = unique_docs[:5]
     raw_contexts = []
+    document_names = []
+    onedrive_urls = []
+    doc_ids = []
     
-    for doc in top_docs:
+    logger.info(f"[DOC_AGENT] Processing {len(top_docs)} top documents...")
+    
+    for i, doc in enumerate(top_docs):
         content = doc.get('payload', {}).get('page_content', '')
-        if content:
-            # Check readability
-            readable_chars = sum(1 for c in content if c.isprintable() or c.isspace())
-            total_chars = len(content)
+        doc_name = doc.get('payload', {}).get('document_name', '')
+        onedrive_url = doc.get('payload', {}).get('onedrive_url', '')
+        
+        logger.info(f"[DOC_AGENT] Doc {i+1}: name='{doc_name}', content_type={type(content)}, content_len={len(content) if content else 0}")
+        
+        # Simple check - just make sure content exists
+        if content and isinstance(content, str) and content.strip():
+            raw_contexts.append(content.strip())
+            logger.info(f"[DOC_AGENT]   Added content: {len(content.strip())} chars")
             
-            if total_chars > 0 and (readable_chars / total_chars) > 0.7:
-                raw_contexts.append(content)
-            else:
-                logger.warning(f"[DOC_AGENT] Skipping garbled content")
-    
+            if doc_name and isinstance(doc_name, str) and doc_name not in document_names:
+                document_names.append(doc_name)
+                logger.info(f"[DOC_AGENT]   Added document name: {doc_name}")
+            
+            if onedrive_url and isinstance(onedrive_url, str) and onedrive_url not in onedrive_urls:
+                onedrive_urls.append(onedrive_url)
+                logger.info(f"[DOC_AGENT]   Added OneDrive URL: {onedrive_url}")
+            
+            doc_id = doc.get('id')
+            if doc_id and doc_id not in doc_ids:
+                doc_ids.append(doc_id)
+        else:
+            logger.warning(f"[DOC_AGENT]   Skipping invalid content: type={type(content)}, length={len(content) if content else 0}")
+
+    logger.info(f"[DOC_AGENT] Extracted {len(raw_contexts)} raw contexts")
+    logger.info(f"[DOC_AGENT] Document names found: {document_names}")
+    logger.info(f"[DOC_AGENT] OneDrive URLs found: {onedrive_urls}")
+
     if not raw_contexts:
+        logger.error("[DOC_AGENT] ERROR: No valid content extracted!")
         state["document_found"] = False
-        state["answer"] = "I found documents but the content appears to be corrupted. Please check if documents were uploaded correctly."
+        state["has_reference"] = False
+        state["document_names"] = []
+        state["onedrive_urls"] = []
+        state["answer"] = "I found documents but couldn't extract readable content."
         return state
     
+    # Check if documents are actually relevant to the query
+    relevant_contexts = []
+    relevant_doc_names = []
+    relevant_urls = []
+    relevant_doc_ids = []
+    
+    for i, content in enumerate(raw_contexts):
+        # Try to get the corresponding document name and URL
+        doc_name = ""
+        if i < len(document_names):
+            doc_name = document_names[i]
+        
+        onedrive_url = ""
+        if i < len(onedrive_urls):
+            onedrive_url = onedrive_urls[i]
+        
+        doc_id = ""
+        if i < len(doc_ids):
+            doc_id = doc_ids[i]
+        
+        # Check if this document is relevant to the query
+        if is_document_relevant_to_query(content, original_query):
+            relevant_contexts.append(content.strip())
+            if doc_name and doc_name not in relevant_doc_names:
+                relevant_doc_names.append(doc_name)
+            if onedrive_url and onedrive_url not in relevant_urls:
+                relevant_urls.append(onedrive_url)
+            if doc_id and doc_id not in relevant_doc_ids:
+                relevant_doc_ids.append(doc_id)
+            logger.info(f"[DOC_AGENT] Document '{doc_name}' deemed RELEVANT to query")
+        else:
+            logger.info(f"[DOC_AGENT] Document '{doc_name}' deemed NOT RELEVANT to query")
+    
+    if not relevant_contexts:
+        logger.info("[DOC_AGENT] No documents found relevant to the query")
+        state["document_found"] = False
+        state["has_reference"] = False
+        state["document_names"] = []
+        state["onedrive_urls"] = []
+        state["reasoning_chain"].append("Document Search: No relevant documents found")
+        return state
+    
+    # Use only relevant documents
+    context = "\n\n".join(relevant_contexts)
+    document_names = relevant_doc_names
+    onedrive_urls = relevant_urls
+    doc_ids = relevant_doc_ids
+    
+    logger.info(f"[DOC_AGENT] After relevance filtering: {len(relevant_contexts)} relevant contexts, {len(document_names)} document names")
+
     context = "\n\n".join(raw_contexts)
+    logger.info(f"[DOC_AGENT] Built context (length: {len(context)})")
+    logger.info(f"[DOC_AGENT] Context first 500 chars: {context[:500]}...")
     
     # Cache for future follow-ups
-    doc_ids = [doc.get('id') for doc in top_docs if any(
-        doc.get('id') == d.get('id') 
-        for d in [doc for doc in top_docs 
-                 if (doc.get('payload', {}).get('page_content', '') in raw_contexts)]
-    )]
-    
     context_manager.update_context("document_agent", "last_document_ids", doc_ids, chat_id)
+    context_manager.update_context("document_agent", "last_document_names", document_names, chat_id)
+    context_manager.update_context("document_agent", "last_onedrive_urls", onedrive_urls, chat_id)
     context_manager.update_context("document_agent", "last_document_content", context, chat_id)
     context_manager.update_context("document_agent", "last_query", original_query, chat_id)
     
-    logger.info(f"[DOC_AGENT] ✓ Cached {len(top_docs)} documents")
+    logger.info(f"[DOC_AGENT] ✓ Cached {len(top_docs)} documents with names: {document_names}")
     
     # Update state
     state["document_context"] = context.strip()
     state["document_found"] = True
     state["sources"] = doc_ids
+    state["document_names"] = document_names
+    state["onedrive_urls"] = onedrive_urls
+    state["has_reference"] = len(document_names) > 0
+    
+    # Log what we're setting in state
+    logger.info(f"[DOC_AGENT] Setting in state:")
+    logger.info(f"  - document_context: {len(state['document_context'])} chars")
+    logger.info(f"  - document_names: {state['document_names']}")
+    logger.info(f"  - onedrive_urls: {state['onedrive_urls']}")
+    logger.info(f"  - has_reference: {state['has_reference']}")
+    
     state["reasoning_chain"].append(f"Document Search: Retrieved {len(top_docs)} new documents")
     
     # Update entity memory
@@ -771,3 +1020,39 @@ def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         context_manager.update_context("document_agent", "last_domain", domain, chat_id)
     
     return state
+
+
+def is_document_relevant_to_query(document_content: str, query: str) -> bool:
+    """
+    Check if document content is actually relevant to the query.
+    Returns True if the document appears to contain information related to the query.
+    """
+    query_lower = query.lower()
+    content_lower = document_content.lower()
+    
+    # Extract key terms from query
+    query_terms = set(query_lower.split())
+    
+    # Remove common stop words
+    stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", 
+                  "of", "with", "by", "is", "are", "was", "were", "be", "been", "being",
+                  "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+                  "should", "may", "might", "must", "can", "could", "what", "where",
+                  "when", "why", "how", "who", "which", "this", "that", "these", "those"}
+    
+    query_terms = query_terms - stop_words
+    
+    # Check if any query terms appear in the document
+    relevant_terms_found = 0
+    for term in query_terms:
+        if len(term) > 2 and term in content_lower:
+            relevant_terms_found += 1
+    
+    # If at least 50% of non-stopword terms are found, consider it relevant
+    if len(query_terms) > 0:
+        relevance_ratio = relevant_terms_found / len(query_terms)
+        logger.info(f"[DOC_RELEVANCE] Query terms: {query_terms}")
+        logger.info(f"[DOC_RELEVANCE] Found {relevant_terms_found}/{len(query_terms)} terms, ratio: {relevance_ratio:.2f}")
+        return relevance_ratio >= 0.3
+    
+    return False

@@ -28,7 +28,7 @@ import { v4 as uuidv4 } from "uuid";
 import FaceIcon from "@mui/icons-material/Face";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import SendIcon from "@mui/icons-material/Send";
-import { CHAT } from "../urls";
+import { CHAT, BASE_URL } from "../urls";
 import { keyframes } from "@emotion/react";
 import { useParams } from "react-router-dom";
 
@@ -66,7 +66,25 @@ function ChatInterface() {
   const btnRef = React.useRef();
   const { domain } = useParams();
 
+  const [referenceDocs, setReferenceDocs] = useState([]);
+  const [selectedReference, setSelectedReference] = useState(null);
+
   const FRONTEND_TOKEN = "lYrCN/UOC8c+e7CveLp1awTcoUJG8wGDYw5IaK5wf+w=";
+
+  useEffect(() => {
+    // Clear reference state when question changes significantly
+    if (question && question.length > 0) {
+      const isNewTopic = !chatHistory.some(entry => 
+        entry.role === "user" && 
+        entry.message.toLowerCase().includes(question.toLowerCase().split(' ')[0])
+      );
+      
+      if (isNewTopic) {
+        setReferenceDocs([]);
+        setSelectedReference(null);
+      }
+    }
+  }, [question, chatHistory]);
 
   // Send Chat Question
   const handleSubmit = async (e) => {
@@ -97,9 +115,9 @@ function ChatInterface() {
         }
       );
 
-      const botAnswer =
-        response.data.answer || "No answer from multi-agent backend";
-      const mapLinks = response.data.map_links || [];
+      const botAnswer = response.data.answer || "No answer from multi-agent backend";
+      const hasReference = response.data.has_reference;
+      const referenceDocuments = response.data.reference_documents || [];
 
       // If backend returns new chat_id on first request, store it
       if (response.data.chat_id && !chatSessionId) {
@@ -109,8 +127,16 @@ function ChatInterface() {
       // Update chat history
       setChatHistory((prev) => [
         ...prev,
-        { role: "user", message: question },
-        { role: "bot", message: botAnswer, mapLinks },
+        { 
+          role: "user", 
+          message: question 
+        },
+        { 
+          role: "bot", 
+          message: botAnswer,
+          hasReference: hasReference,
+          referenceDocuments: referenceDocuments
+        },
       ]);
 
       setQuestion(""); // clear input
@@ -126,6 +152,146 @@ function ChatInterface() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleReferenceClick = async (documentName, onedriveUrl = null) => {
+    try {
+      let urlToOpen;
+      let message = "";
+      
+      if (onedriveUrl) {
+        // Use the provided OneDrive URL
+        urlToOpen = onedriveUrl;
+        message = `Opening document: ${documentName}`;
+      } else {
+        // Try to get URL from backend
+        toast({
+          title: "Fetching document link...",
+          status: "info",
+          duration: 2000,
+          isClosable: true,
+        });
+        
+        try {
+          const response = await axios.post(
+            CHAT.GET_REFERENCE,
+            { document_name: documentName },
+            {
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${FRONTEND_TOKEN}`,
+              },
+            }
+          );
+          
+          if (response.data.success) {
+            // Try preview_url first, then direct_link
+            urlToOpen = response.data.preview_url || response.data.direct_link;
+            
+            if (urlToOpen) {
+              message = `Opening document: ${documentName}`;
+            } else {
+              // Fallback to shared folder
+              urlToOpen = ONEDRIVE_FOLDER_URL;
+              message = `Document link not found. Opening shared folder to find "${documentName}"`;
+            }
+          } else {
+            // Fallback to shared folder
+            urlToOpen = ONEDRIVE_FOLDER_URL;
+            message = `Could not get document link. Opening shared folder to find "${documentName}"`;
+          }
+        } catch (apiError) {
+          console.error("API error:", apiError);
+          // Fallback to shared folder
+          urlToOpen = ONEDRIVE_FOLDER_URL;
+          message = `Error fetching link. Opening shared folder to find "${documentName}"`;
+        }
+      }
+      
+      // Show status message
+      toast({
+        title: message.includes("Opening document") ? "Opening document" : "Opening folder",
+        description: message,
+        status: "info",
+        duration: 3000,
+        isClosable: true,
+      });
+      
+      // Open the URL in a new tab
+      setTimeout(() => {
+        window.open(
+          urlToOpen,
+          '_blank',
+          'noopener,noreferrer,width=1200,height=800'
+        );
+      }, 500);
+      
+    } catch (error) {
+      console.error("Error in handleReferenceClick:", error);
+      
+      // Ultimate fallback: open the shared folder
+      toast({
+        title: "Opening shared folder",
+        description: `Please find "${documentName}" in the shared folder (use Ctrl+F to search)`,
+        status: "info",
+        duration: 5000,
+        isClosable: true,
+      });
+      
+      setTimeout(() => {
+        window.open(
+          ONEDRIVE_FOLDER_URL,
+          '_blank',
+          'noopener,noreferrer'
+        );
+      }, 500);
+    }
+  };
+
+  // ReferenceButton component
+  const ReferenceButton = ({ document, onedriveUrl, onClick }) => {
+    // Truncate long document names for display
+    const displayName = document.name.length > 25 
+      ? `${document.name.substring(0, 22)}...${document.name.split('.').pop()}` 
+      : document.name;
+    
+    // Tooltip with full document name
+    const tooltipText = `Click to open: ${document.name}\n${onedriveUrl ? `URL: ${onedriveUrl}` : 'URL: Will open shared folder'}`;
+    
+    const handleClick = () => {
+      if (onedriveUrl) {
+        // Pass both document name and OneDrive URL
+        onClick(document.name, onedriveUrl);
+      } else {
+        // Pass only document name
+        onClick(document.name);
+      }
+    };
+    
+    return (
+      <Button
+        size="xs"
+        colorScheme="blue"
+        variant="outline"
+        onClick={handleClick}
+        mt={2}
+        mr={2}
+        title={tooltipText}
+        maxW="200px"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        whiteSpace="nowrap"
+        _hover={{ 
+          transform: "translateY(-2px)",
+          boxShadow: "md",
+          bg: useColorModeValue("blue.50", "blue.900")
+        }}
+        transition="all 0.2s"
+        leftIcon={<Box as="span" fontSize="sm">📄</Box>}
+      >
+        {displayName}
+      </Button>
+    );
   };
 
   return (
@@ -178,6 +344,7 @@ function ChatInterface() {
                     : useColorModeValue("gray.100", "gray.900")
                 }
                 borderRadius="15"
+                w="full"
               >
                 <Text fontWeight="bold">
                   {entry.role === "user" ? <FaceIcon /> : <SmartToyIcon />}
@@ -194,9 +361,32 @@ function ChatInterface() {
                     />
                   </HStack>
                 ) : (
-                  <ReactMarkdown>
-                    {entry.message.normalize("NFC")}
-                  </ReactMarkdown>
+                  <>
+                    <ReactMarkdown>
+                      {entry.message.replace(/\[REFERENCE:.*?\]/g, '')}
+                    </ReactMarkdown>
+
+                    {entry.hasReference && entry.referenceDocuments && entry.referenceDocuments.length > 0 && (
+                      <HStack wrap="wrap" mt={2}>
+                        <Text fontSize="sm" fontWeight="bold" mr={2} color={useColorModeValue("blue.700", "blue.300")}>
+                          📚 References:
+                        </Text>
+                        {entry.referenceDocuments.map((doc, idx) => {
+                          // Validate that the document has a name
+                          if (!doc.name || doc.name.trim() === "") return null;
+                          
+                          return (
+                            <ReferenceButton
+                              key={idx}
+                              document={doc}
+                              onedriveUrl={doc.preview_url || doc.direct_link}
+                              onClick={handleReferenceClick}
+                            />
+                          );
+                        })}
+                      </HStack>
+                    )}
+                  </>
                 )}
 
                 {Array.isArray(entry.image) &&
