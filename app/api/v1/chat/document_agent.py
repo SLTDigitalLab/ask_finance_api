@@ -29,8 +29,17 @@ from PIL import Image
 import asyncio
 import tempfile
 import base64
+import zipfile
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from google import genai
+from google.genai import types
+
+
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
+
+GEMINI_OCR_URL = "https://api.gemini.ai/v1/vision/ocr"  
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +136,39 @@ search_tool = TavilySearchResults()
 
 logger = logging.getLogger(__name__)
 
-async def gemini_ocr(file_bytes: bytes) -> str:
-    return "Extracted text from Gemini OCR"
+
+# Gemini OCR function
+os.environ["GENAI_API_KEY"] = os.getenv("GOOGLE_API_KEY")
+
+async def gemini_ocr(file_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    """
+    Extract text from an image using Gemini API asynchronously.
+    If mime_type is not provided, defaults to 'image/jpeg'.
+    """
+    try:
+        client = genai.Client()
+
+        # Run synchronous Gemini client in thread executor
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                    "Extract all text accurately from this flyer/image."
+                ]
+            )
+        )
+
+        return response.text or ""
+
+    except Exception as e:
+        print(f"[gemini_ocr] OCR failed: {e}")
+        return ""
 
 
+# EML parser (email)
 def build_email_document_structure(msg, body_text: str, attachment_text: str) -> str:
     from_addr = msg.get("From", "")
     to_addr = msg.get("To", "")
@@ -152,42 +190,64 @@ Flyer Text:
 
     return final_text
 
-
 async def parse_eml(file_bytes: bytes) -> str:
     msg = BytesParser(policy=policy.default).parsebytes(file_bytes)
 
     body = ""
     attachment_texts = []
-    ocr_tasks = []
+    ocr_tasks = []  # list of tuples: (key, task)
+    cid_map = {}  # cid -> OCR text
 
     if msg.is_multipart():
         for part in msg.walk():
             ctype = part.get_content_type()
             disp = part.get_content_disposition()
+            cid = part.get("Content-ID", "").strip("<>")
 
-            # Body text
+            # ------------------------
+            # BODY TEXT
+            # ------------------------
             if ctype == "text/plain" and disp != "attachment":
                 body += part.get_content() + "\n"
-
-            if ctype == "text/html" and disp != "attachment":
+            elif ctype == "text/html" and disp != "attachment":
                 soup = BeautifulSoup(part.get_content(), "html.parser")
                 body += soup.get_text() + "\n"
 
-            # Attachments
+            # ------------------------
+            # INLINE IMAGES (cid)
+            # ------------------------
+            if ctype.startswith("image/") and cid:
+                data = part.get_content()
+                mime_type = ctype
+                task = asyncio.create_task(gemini_ocr(data, mime_type))
+                ocr_tasks.append((cid, task))
+
+            # ------------------------
+            # ATTACHMENTS
+            # ------------------------
             if disp == "attachment":
-                filename = part.get_filename() or ""
+                filename = (part.get_filename() or "").lower()
                 data = part.get_content()
 
-                if filename.lower().endswith(".pdf"):
+                if filename.endswith(".pdf"):
                     attachment_texts.append(parse_pdf(data))
-                elif filename.lower().endswith(".docx"):
+                elif filename.endswith(".docx"):
                     attachment_texts.append(parse_docx(data))
-                elif filename.lower().endswith((".png", ".jpg", ".jpeg")):
-                    ocr_tasks.append(gemini_ocr(data))
+                elif filename.endswith((".png", ".jpg", ".jpeg")):
+                    task = asyncio.create_task(gemini_ocr(data, part.get_content_type()))
+                    ocr_tasks.append((filename, task))
 
-    if ocr_tasks:
-        ocr_results = await asyncio.gather(*ocr_tasks)
-        attachment_texts.extend(ocr_results)
+    # Run OCR asynchronously
+    for key, task in ocr_tasks:
+        text = await task
+        cid_map[key] = text
+
+    # Replace cids in body with OCR text
+    for cid, text in cid_map.items():
+        body = body.replace(f"[cid:{cid}]", text)
+
+    # Combine any remaining OCRed attachments that weren’t inline
+    attachment_texts.extend([v for k, v in cid_map.items() if k not in body])
 
     return build_email_document_structure(
         msg,
@@ -195,6 +255,8 @@ async def parse_eml(file_bytes: bytes) -> str:
         "\n".join(attachment_texts)
     )
 
+
+# DOCX parser
 def parse_docx(file_bytes: bytes) -> str:
     """Extract text from DOCX file with error handling."""
     try:
@@ -204,6 +266,7 @@ def parse_docx(file_bytes: bytes) -> str:
         logger.warning(f"DOCX parsing error: {e}")
         return ""
 
+# PDF parser
 def parse_pdf(file_bytes: bytes) -> str:
     """Extract text from PDF file with error handling."""
     text = ""
@@ -226,6 +289,133 @@ def parse_text(file_bytes: bytes) -> str:
     except Exception as e:
         logger.warning(f"Text parsing error: {e}")
         return ""
+
+# Image parser (OCR)
+async def parse_image(file_bytes: bytes) -> str:
+    try:
+        Image.open(io.BytesIO(file_bytes))  # Validate image
+        ocr_text = await gemini_ocr(file_bytes)
+        return f"[IMAGE OCR] {ocr_text.strip()}" if ocr_text else ""
+    except Exception as e:
+        print(f"Image parsing failed: {e}")
+        return ""
+
+# PPTX parser with OCR for images
+async def parse_pptx_smart(file_bytes: bytes) -> str:
+    """
+    Fully enhanced PPTX extractor:
+    - Slide text
+    - SmartArt text
+    - Grouped shape text
+    - Table text
+    - Speaker notes
+    - Images (ppt/media, embeddings, charts) → OCR via Gemini
+    """
+
+    prs = Presentation(io.BytesIO(file_bytes))
+    extracted_text = []
+
+    # ------------------------------------------
+    # Helper: recursively extract text from shapes
+    # ------------------------------------------
+    def extract_shape_text(shape):
+        try:
+            # Basic text
+            if hasattr(shape, "text") and shape.text.strip():
+                extracted_text.append(shape.text.strip())
+
+            # Text frame
+            if hasattr(shape, "text_frame") and shape.text_frame:
+                for p in shape.text_frame.paragraphs:
+                    t = p.text.strip()
+                    if t:
+                        extracted_text.append(t)
+
+            # Table text
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        t = cell.text.strip()
+                        if t:
+                            extracted_text.append(t)
+
+            # Grouped shapes / SmartArt
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                for sub in shape.shapes:
+                    extract_shape_text(sub)
+
+        except Exception:
+            pass
+
+    # ------------------------------------------
+    # Extract text from slides + notes
+    # ------------------------------------------
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            extract_shape_text(shape)
+
+        if slide.has_notes_slide:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+            if notes:
+                extracted_text.append(f"[SPEAKER NOTES] {notes}")
+
+    # ------------------------------------------
+    # Extract images from PPTX ZIP
+    # ------------------------------------------
+    pptx_zip = zipfile.ZipFile(io.BytesIO(file_bytes))
+    image_extensions = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff")
+
+    image_files = [
+        fn for fn in pptx_zip.namelist()
+        if fn.lower().endswith(image_extensions)
+    ]
+
+    # Also check ppt/media, ppt/embeddings
+    for fn in pptx_zip.namelist():
+        lower_fn = fn.lower()
+        if (
+            lower_fn.startswith("ppt/media/")
+            or lower_fn.startswith("ppt/embeddings/")
+        ):
+            if lower_fn.endswith(image_extensions):
+                if fn not in image_files:
+                    image_files.append(fn)
+
+    # ------------------------------------------
+    # OCR each image
+    # ------------------------------------------
+    for img_name in image_files:
+        try:
+            img_bytes = pptx_zip.read(img_name)
+
+            # Validate correct image type
+            try:
+                Image.open(io.BytesIO(img_bytes))
+            except:
+                continue  # skip broken or non-image files
+
+            # OCR using Gemini
+            ocr_text = await gemini_ocr(img_bytes)
+
+            if ocr_text and ocr_text.strip():
+                extracted_text.append(f"[IMAGE OCR] {ocr_text.strip()}")
+
+        except Exception as e:
+            print(f"Failed OCR for image {img_name}: {e}")
+
+    # ------------------------------------------
+    # Clean + dedupe
+    # ------------------------------------------
+    cleaned = []
+    seen = set()
+
+    for line in extracted_text:
+        line = line.strip()
+        if line and line not in seen:
+            cleaned.append(line)
+            seen.add(line)
+
+    return "\n".join(cleaned)
 
 
 def get_chat_history(chat_id: str, domain: Optional[str] = None):
@@ -398,34 +588,22 @@ async def fetch_onedrive_folder_docs(folder_id: str = None, token: str = None, s
             file_resp = requests.get(download_url, timeout=30)
             file_resp.raise_for_status()
             file_bytes = file_resp.content
-            name = item_name.lower()
-            
-            logger.info(f"  File size: {len(file_bytes)} bytes")
-            logger.info(f"  File type: {name.split('.')[-1] if '.' in name else 'unknown'}")
+            name = item["name"].lower()
 
-            file_text = ""
-            
-            # Parse with error handling for each file type
-            try:
-                if name.endswith(".docx"):
-                    logger.info("  Parsing as DOCX")
-                    file_text = parse_docx(file_bytes)
-                elif name.endswith(".pdf"):
-                    logger.info("  Parsing as PDF")
-                    file_text = parse_pdf(file_bytes)
-                elif name.endswith(".eml"):
-                    logger.info("  Parsing as EML")
-                    file_text = await parse_eml(file_bytes)
-                elif name.endswith((".txt", ".md", ".json")):
-                    logger.info(f"  Parsing as {name.split('.')[-1].upper()}")
-                    file_text = parse_text(file_bytes)
-                else:
-                    logger.warning(f"Skipping unsupported file type: {item_name}")
-                    error_count += 1
-                    continue
-            except Exception as parse_error:
-                logger.error(f"Error parsing {item_name}: {parse_error}")
-                error_count += 1
+            if name.endswith(".docx"):
+                file_text = parse_docx(file_bytes)
+            elif name.endswith(".pdf"):
+                file_text = parse_pdf(file_bytes)
+            elif name.endswith(".eml"):
+                file_text = await parse_eml(file_bytes)  # New support for emails
+            elif name.endswith(".pptx"):
+                file_text = await parse_pptx_smart(file_bytes)
+            elif name.endswith((".jpg", ".jpeg", ".png")):
+                file_text = await gemini_ocr(file_bytes)
+            elif name.endswith((".txt", ".md", ".json")):
+                file_text = parse_text(file_bytes)
+            else:
+                logger.warning(f"Skipping unsupported file type: {item['name']}")
                 continue
 
             if not file_text or not file_text.strip():

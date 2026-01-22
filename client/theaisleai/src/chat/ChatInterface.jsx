@@ -295,7 +295,8 @@ function ChatInterface() {
   };
 
   return (
-    <Flex h="80vh" w="100%" justify="center" align="center">
+    
+    <Flex direction="column" h="80vh" w="100%" justify="center" align="center">
       {/* Centered main container, same width as before (85%) */}
       <Box
         h="100%"
@@ -309,7 +310,7 @@ function ChatInterface() {
         position="relative" // keeps the help popover absolute positioning working
       >
         <VStack spacing={2} p={4} pb={0} flexGrow={1}>
-          <VStack w="full" h="70vh" alignItems="left" p={3} overflowY="auto">
+          <VStack w="full" h="65vh" alignItems="left" p={3} overflowY="auto">
             {chatHistory.length === 0 ? (
               <VStack
                 spacing={1}
@@ -474,7 +475,47 @@ function ChatInterface() {
           </Flex>
         </VStack>
       </Box>
-    </Flex>
+
+            {/* --- FOOTER --- */}
+         <Box 
+            as="footer" 
+            position="fixed"  
+            bottom="0"       
+            left="0"
+            right="0"         
+            zIndex={100}      
+            py={{ base: 2, md: 3 }}
+            bg={useColorModeValue("gray.50", "gray.900")} 
+            borderColor={useColorModeValue("gray.200", "gray.700")}
+         >
+        <Flex justify="center" align="center" gap={3}>
+          <Text 
+            fontSize="xs" 
+            fontWeight="bold" 
+            color="gray.500" 
+            textTransform="uppercase" 
+            letterSpacing="wider"
+          >
+            Powered By
+          </Text>
+          
+          <Image 
+            src="/public/embryo-removebg.png" 
+            alt="SLT Digital Lab Logo" 
+            h="35px" 
+            objectFit="contain" 
+            opacity={0.8}
+            _hover={{ opacity: 1 }}
+            transition="opacity 0.2s"
+          />
+        </Flex>
+      </Box>
+      </Flex>
+
+
+
+    
+    
   );
 }
 
