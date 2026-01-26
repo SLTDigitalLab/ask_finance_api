@@ -4,11 +4,54 @@ import psycopg2
 import psycopg2.extras
 
 
-def default_config(filename="db/database.ini", section="postgresql"):
-    # create a parser
+# def default_config(filename="database.ini", section="postgresql"):
+#     # create a parser
+#     parser = ConfigParser()
+#     # read config file
+#     parser.read(filename)
+
+#     # get section, default to postgresql
+#     db = {}
+#     if parser.has_section(section):
+#         params = parser.items(section)
+#         for param in params:
+#             db[param[0]] = param[1]
+#     else:
+#         raise Exception(
+#             "Section {0} not found in the {1} file".format(section, filename)
+#         )
+
+#     return db
+
+def default_config(filename="database.ini", section="postgresql"):
+    import os
+    from dotenv import load_dotenv
+    
+    # Load environment variables (for Docker)
+    load_dotenv()
+    
+    # Try environment variables first
+    db_host = os.getenv('DB_HOST')
+    if db_host:
+        return {
+            'host': db_host,
+            'port': os.getenv('DB_PORT', '5432'),
+            'database': os.getenv('DB_NAME', 'postgres'),
+            'user': os.getenv('DB_USER', 'postgres'),
+            'password': os.getenv('DB_PASSWORD', 'postgres')
+        }
+    
+    # Fallback to config file
     parser = ConfigParser()
-    # read config file
-    parser.read(filename)
+    
+    # Get absolute path to config file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(current_dir, filename)
+    
+    # Debug: print path (remove in production)
+    print(f"DEBUG: Looking for config at: {config_path}")
+    
+    parser.read(config_path)
 
     # get section, default to postgresql
     db = {}
@@ -18,11 +61,10 @@ def default_config(filename="db/database.ini", section="postgresql"):
             db[param[0]] = param[1]
     else:
         raise Exception(
-            "Section {0} not found in the {1} file".format(section, filename)
+            "Section {0} not found in the {1} file".format(section, config_path)
         )
 
     return db
-
 
 def version():
     """Connect to the PostgreSQL database server"""

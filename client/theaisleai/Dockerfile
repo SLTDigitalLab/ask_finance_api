@@ -1,23 +1,27 @@
-FROM node:18-alpine as BUILD_IMAGE
+# ---------- Build Stage ----------
+FROM node:18-alpine AS build
+
 WORKDIR /app
 
-
-COPY package.json .
-
+COPY package.json package-lock.json* ./
 RUN npm install --legacy-peer-deps
 
 COPY . .
-
 RUN npm run build
 
-# FROM nginx:alpine
 
-# COPY --from=BUILD_IMAGE /app/dist /usr/share/nginx/html
-# COPY /nginx/nginx.conf /etc/nginx/nginx.conf
+# ---------- Nginx Stage ----------
+FROM nginx:alpine
 
-# # RUN useradd -ms /bin/bash www-data
-# # RUN chown -R www-data:www-data /usr/share/nginx/html
+# Remove default config
+RUN rm /etc/nginx/conf.d/default.conf
 
-# EXPOSE 80
+# Copy custom nginx config
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
-# CMD ["nginx","-g","daemon off;"]
+# Copy built frontend
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

@@ -10,8 +10,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import trafilatura
 from readability import Document
-from db.psql_connector import DB, default_config
-from api.v1.chat.vectorstore import *
+from ....db.psql_connector import DB, default_config
+from .vectorstore import *
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .app_types import AgentState

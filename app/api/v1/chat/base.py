@@ -8,16 +8,18 @@ from datetime import datetime
 import logging
 import os
 from dotenv import load_dotenv
-from db.psql_connector import DB, default_config
+from app.db.psql_connector import DB, default_config
 import re
-from langchain.prompts import PromptTemplate
+from langchain.prompts.prompt import PromptTemplate
+from langchain.prompts.chat import ChatPromptTemplate
+
+
 from langchain.chains import LLMChain
+from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from api.v1.chat.vectorstore import *
+from .vectorstore import *
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_tavily import TavilySearch
 from .document_agent import document_search_agent
 from .app_types import AgentState
@@ -143,7 +145,7 @@ def create_initial_state(query: str, collection_ids: Optional[List[str]] = None)
 def initialize_available_collections():
     """Initialize with any available collections from database."""
     try:
-        create_collection()
+        create_collection(domain="default")
         
         logger.info(f"Initialized collection")
         
