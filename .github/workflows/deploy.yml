@@ -24,3 +24,4 @@ jobs:
           script: |
             cd ~/ask-finance
             bash scripts/deploy.sh
+        timeout-minutes: 120    

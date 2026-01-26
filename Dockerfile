@@ -60,7 +60,7 @@ ENV PATH $CHROMEDRIVER_DIR:$PATH
 
 RUN pip install langchain-tavily
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt -v
 RUN python -m spacy download en_core_web_sm 
 
 # --no-cache-dir 
