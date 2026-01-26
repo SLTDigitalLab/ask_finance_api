@@ -3,14 +3,12 @@ set -euo pipefail
 
 echo "🚀 Starting ASK Finance API deployment..."
 
-# Move to project directory
+# --- Move to project directory ---
 cd ~/ask-finance || { echo "❌ Directory ~/ask-finance not found"; exit 1; }
 
 # --- GIT UPDATE ---
 echo "📦 Fetching latest code from main branch..."
 git fetch origin main || { echo "❌ Git fetch failed"; exit 1; }
-
-# Reset local changes to match remote
 echo "🔄 Resetting local changes..."
 git reset --hard origin/main || { echo "❌ Git reset failed"; exit 1; }
 
@@ -18,14 +16,18 @@ git reset --hard origin/main || { echo "❌ Git reset failed"; exit 1; }
 echo "🛑 Stopping and removing old containers, networks, and volumes..."
 docker compose down -v || echo "⚠️ No containers/networks/volumes to remove, continuing..."
 
+# Remove dangling containers, networks, volumes (extra cleanup)
+docker system prune -f || echo "⚠️ Docker prune failed, continuing..."
+
 # --- FREE PORTS IF IN USE ---
 PORTS=(8000 5432 6333) # Add all exposed ports here
 for PORT in "${PORTS[@]}"; do
-    if lsof -i :"$PORT" &>/dev/null; then
+    while lsof -i :"$PORT" &>/dev/null; do
         echo "⚠️ Port $PORT is in use. Attempting to free it..."
         PID=$(lsof -ti :"$PORT")
-        kill -9 $PID || echo "⚠️ Failed to kill process on port $PORT. Deployment may fail."
-    fi
+        kill -9 $PID || echo "⚠️ Failed to kill process on port $PORT."
+        sleep 2
+    done
 done
 
 # --- FRONTEND BUILD ---
@@ -40,9 +42,28 @@ cp -r dist/* ../../frontend_build/
 
 cd ../../ || { echo "❌ Failed to return to project root"; exit 1; }
 
-# --- DOCKER BUILD ---
-echo "🐳 Rebuilding containers..."
-docker compose up -d --build || { echo "❌ Docker compose build failed"; exit 1; }
+# --- DOCKER BUILD WITH RETRY ---
+MAX_RETRIES=3
+COUNT=0
+until [ $COUNT -ge $MAX_RETRIES ]
+do
+    echo "🐳 Rebuilding containers (attempt $((COUNT+1))/$MAX_RETRIES)..."
+    if docker compose up -d --build; then
+        echo "✅ Docker compose succeeded"
+        break
+    else
+        echo "⚠️ Docker compose failed, retrying..."
+        COUNT=$((COUNT+1))
+        sleep 5
+        # Try cleaning up again
+        docker compose down -v || echo "⚠️ Docker down failed during retry"
+    fi
+done
+
+if [ $COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ Docker compose failed after $MAX_RETRIES attempts. Aborting deployment."
+    exit 1
+fi
 
 echo "⏳ Waiting 15s for containers to stabilize..."
 sleep 15
