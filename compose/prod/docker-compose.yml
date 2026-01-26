@@ -68,29 +68,19 @@ services:
     networks:
       - net
 
-
-  # client:
-  #   image: nginx:latest
-  #   container_name: askfinance-client
-  #   restart: always
-  #   ports:
-  #     - "8080:80"
-  #     - "443:443"
-  #   volumes:
-  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-  #     - ./frontend_build:/usr/share/nginx/html:ro
-  #   depends_on:
-  #     - api
-  #   networks:
-  #     - net
-
   client:
-    build:
-      context: ./client/theaisleai
+    image: nginx:latest
+
     container_name: askfinance-client
     restart: always
     ports:
       - "8080:80"
+
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend_build:/usr/share/nginx/html:ro
+
     depends_on:
       - api
     networks:
