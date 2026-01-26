@@ -64,6 +64,10 @@ class ChatResponse(BaseModel):
     sources: List[str] = []
     chat_id: str
     reasoning_chain: List[str] = []
+    document_names: List[str] = []
+    onedrive_urls: List[str] = []
+    has_reference: bool = False
+    reference_documents: List[Dict] = []
 
 class CollectionResponse(BaseModel):
     collection_id: str
@@ -283,41 +287,118 @@ def synthesis_agent(state: AgentState) -> AgentState:
     
     query = state["query"]
     document_context = state.get("document_context", "")
+    document_names = state.get("document_names", [])
+    onedrive_urls = state.get("onedrive_urls", [])
     previous_context = state.get("previous_context", "")
     conversation_summary = state.get("conversation_summary", {})
 
     logger.info("======================")
-    logger.info(str(document_context))
+    logger.info(f"[SYNTHESIS] Query: '{query}'")
+    logger.info(f"[SYNTHESIS] Document context length: {len(document_context) if document_context else 0}")
+    logger.info(f"[SYNTHESIS] Document names: {document_names}")
 
-    res = search_similar(query, domain=state.get("collection_id"))
-    document_context = " ".join(
-        item["payload"].get("page_content", "") 
-        for item in res if "payload" in item
-    ).strip()
+    # Check if this query should even have references
+    # Queries about personal information shouldn't have document references
+    personal_info_keywords = [
+        "my name", "your name", "who am i", "who are you", "i am", "my age",
+        "my birthday", "my details", "personal information", "about me"
+    ]
     
-    # Build comprehensive context
+    is_personal_info_query = any(
+        keyword in query.lower() 
+        for keyword in personal_info_keywords
+    )
+    
+    # Check for vague statements that shouldn't have references
+    is_statement_not_question = not any(
+        q_word in query.lower() 
+        for q_word in ["what", "where", "when", "why", "how", "who", "which", "explain", "tell", "show"]
+    ) and query.strip()[-1] not in ["?"]
+    
+    if is_personal_info_query or is_statement_not_question:
+        logger.info(f"[SYNTHESIS] Personal info or statement query detected - clearing references")
+        state["document_names"] = []
+        state["onedrive_urls"] = []
+        state["has_reference"] = False
+        state["document_context"] = ""  # Clear document context too
+    
+    # If document_context is None or empty, try to get it directly
+    if not document_context or document_context == "None":
+        logger.warning("[SYNTHESIS] WARNING: document_context is empty!")
+        
+        # Only try direct search if it's not a personal info query
+        if not is_personal_info_query:
+            try:
+                collection_id = state.get("collection_id")
+                if collection_id:
+                    logger.info(f"[SYNTHESIS] Trying direct search for domain: {collection_id}")
+                    res = search_similar(query, domain=collection_id, limit=3)
+                    if res:
+                        document_context = " ".join(
+                            item["payload"].get("page_content", "") 
+                            for item in res if "payload" in item
+                        ).strip()
+                        logger.info(f"[SYNTHESIS] Found context via direct search: {len(document_context)} chars")
+                        
+                        # Also try to extract document names
+                        temp_doc_names = []
+                        temp_urls = []
+                        for item in res:
+                            doc_name = item.get('payload', {}).get('document_name', '')
+                            if doc_name and doc_name not in temp_doc_names:
+                                temp_doc_names.append(doc_name)
+                            
+                            onedrive_url = item.get('payload', {}).get('onedrive_url', '')
+                            if onedrive_url and onedrive_url not in temp_urls:
+                                temp_urls.append(onedrive_url)
+                        
+                        if temp_doc_names:
+                            document_names = temp_doc_names
+                            onedrive_urls = temp_urls
+            except Exception as e:
+                logger.error(f"[SYNTHESIS] Direct search error: {e}")
+    
+    # Build context based on query type
     context_parts = []
     
     # Add conversation history if available
-    if previous_context:
+    if previous_context and not is_personal_info_query:
         context_parts.append(f"Conversation History:\n{previous_context}")
     
     # Add entity memory
-    if conversation_summary and conversation_summary.get("entities"):
+    if conversation_summary and conversation_summary.get("entities") and not is_personal_info_query:
         entities_str = "\n".join([
             f"- {entity_type}: {', '.join(entities[:3])}"
             for entity_type, entities in conversation_summary["entities"].items()
         ])
         context_parts.append(f"Referenced Topics:\n{entities_str}")
     
-    # Add document context
-    if document_context and document_context != "No relevant documents found.":
+    # Add document context only if it's valid and query is appropriate
+    if (document_context and document_context != "No relevant documents found." and 
+        not is_personal_info_query and not is_statement_not_question):
         context_parts.append(f"Document Context:\n{document_context}")
     
     context = "\n\n".join(context_parts) if context_parts else ""
 
-    logger.info("========================")
-    logger.info(context)
+    logger.info(f"[SYNTHESIS] Context built (length: {len(context)})")
+    
+    # Determine if we should include references
+    # Only include references if:
+    # 1. We have document names
+    # 2. We have document context
+    # 3. It's not a personal info query
+    # 4. It's not just a statement
+    has_reference = (len(document_names) > 0 and 
+                     document_context and 
+                     document_context != "No relevant documents found." and
+                     not is_personal_info_query and 
+                     not is_statement_not_question)
+    
+    logger.info(f"[SYNTHESIS] Has reference decision: {has_reference}")
+    logger.info(f"[SYNTHESIS] Reason - is_personal_info_query: {is_personal_info_query}")
+    logger.info(f"[SYNTHESIS] Reason - is_statement_not_question: {is_statement_not_question}")
+    logger.info(f"[SYNTHESIS] Reason - document_names count: {len(document_names)}")
+    logger.info(f"[SYNTHESIS] Reason - document_context exists: {bool(document_context)}")
     
     system_prompt = """You are a helpful AI assistant that provides clear and concise responses.
 Use the provided conversation history and document context to answer clearly and accurately.
@@ -327,11 +408,14 @@ IMPORTANT INSTRUCTIONS:
 - Use document context to provide accurate information
 - If the question refers to something mentioned earlier, acknowledge that continuity
 - If no relevant information is available, say so clearly
+- For personal questions (about names, ages, personal details), politely explain you don't have that information
+- For statements (not questions), provide an appropriate acknowledgment
 """
     
-    if not context:
+    if not context and not is_personal_info_query and not is_statement_not_question:
         state["answer"] = "I couldn't find relevant information to answer your question."
         state["reasoning_chain"].append("Synthesis Agent: No context available")
+        state["has_reference"] = False
         return state
     
     try:
@@ -340,7 +424,7 @@ IMPORTANT INSTRUCTIONS:
             temperature=0.7,
             convert_system_message_to_human=True,
         )
-        
+
         prompt_content = f"""
 {system_prompt}
 
@@ -353,14 +437,47 @@ Provide a clear, contextual answer using the information above.
         
         response = llm.invoke([HumanMessage(content=prompt_content)])
         answer = response.content
+
+        # Clean up any existing reference markers
+        if '[REFERENCE:' in answer:
+            answer = answer.split('[REFERENCE:')[0].strip()
+
+        # Analyze the answer to see if it actually uses the document context
+        # If the answer says "no information" or similar, we shouldn't show references
+        answer_lower = answer.lower()
+        no_info_phrases = [
+            "no information", "couldn't find", "not available", "don't have",
+            "doesn't contain", "no details", "unable to find", "no relevant",
+            "apologize", "sorry", "i do not have", "no data"
+        ]
+        
+        answer_uses_documents = True
+        if any(phrase in answer_lower for phrase in no_info_phrases):
+            logger.info(f"[SYNTHESIS] Answer indicates no information found - removing references")
+            answer_uses_documents = False
+        
+        # Final decision on references
+        final_has_reference = has_reference and answer_uses_documents
+        
+        if not final_has_reference:
+            document_names = []
+            onedrive_urls = []
         
         state["answer"] = answer
-        state["reasoning_chain"].append("Synthesis Agent: Used conversation + document context")
+        state["document_names"] = document_names
+        state["onedrive_urls"] = onedrive_urls
+        state["has_reference"] = final_has_reference
+        state["reasoning_chain"].append(f"Synthesis Agent: {'Used conversation + document context' if context else 'Simple response'}")
+        
+        logger.info(f"[SYNTHESIS] Final has_reference: {final_has_reference}")
+        logger.info(f"[SYNTHESIS] Final document_names: {document_names}")
+        
         return state
         
     except Exception as e:
         state["answer"] = f"Error generating response: {str(e)}"
         state["reasoning_chain"].append(f"Synthesis Agent: Error - {str(e)}")
+        state["has_reference"] = False
         logger.error(f"Synthesis failed: {e}")
         return state
     
@@ -440,6 +557,26 @@ async def chat_endpoint(
         
         logger.info(f"[CHAT] Processing request for chat_id: {chat_id}, domain: {domain}")
         logger.info(f"[CHAT] Query: {request.query}")
+
+        # Check if this is a simple greeting (no reference needed)
+        is_simple_greeting = any(
+            greeting in request.query.lower() 
+            for greeting in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "how are you"]
+        )
+        
+        # Also check for other simple queries that shouldn't have references
+        is_simple_query = len(request.query.split()) < 3 and not any(
+            q_word in request.query.lower() 
+            for q_word in ["what", "where", "when", "why", "how", "who", "explain", "tell", "show"]
+        )
+        
+        # For simple queries, clear any previous document context
+        if is_simple_greeting or is_simple_query:
+            context_manager.clear_context("document_agent", "last_document_content", chat_id)
+            context_manager.clear_context("document_agent", "last_document_names", chat_id)
+            context_manager.clear_context("document_agent", "last_onedrive_urls", chat_id)
+            context_manager.clear_context("document_agent", "last_document_ids", chat_id)
+            logger.info(f"[CHAT] Cleared document context for simple query: {request.query}")
         
         db = DB(default_config())
         try:
@@ -494,15 +631,54 @@ async def chat_endpoint(
             previous_context=previous_context,
             conversation_summary=summary,
             collection_id=domain,
+            document_names=[],
+            has_reference=False,
         )
+        
+        # If it's a simple greeting, skip document search and go directly to synthesis
+        if is_simple_greeting:
+            logger.info(f"[CHAT] Simple greeting detected, skipping document search")
+            initial_state["needs_doc_search"] = False
+            # Create a simple response for greetings
+            greeting_responses = [
+                "Hello! How can I assist you today?",
+                "Hi there! I'm ready to help you with any questions you have.",
+                "Good day! What can I help you find?",
+                "Hello! I'm here to help you with documents and information."
+            ]
+            import random
+            initial_state["answer"] = random.choice(greeting_responses)
+            initial_state["document_names"] = []
+            initial_state["has_reference"] = False
+            initial_state["reasoning_chain"] = ["Chat: Simple greeting response"]
+        elif is_simple_query:
+            logger.info(f"[CHAT] Simple query detected, using basic response")
+            initial_state["needs_doc_search"] = False
+            # For other simple queries, we'll let the synthesis agent handle it
+            initial_state["document_names"] = []
+            initial_state["has_reference"] = False
+        else:
+            logger.info(f"[CHAT] Non-greeting query, proceeding with full graph")
+            initial_state["needs_doc_search"] = True
         
         logger.info(f"[CHAT] Initial state created, invoking graph...")
         
         config = {"configurable": {"thread_id": chat_id}}
-        final_state = await asyncio.to_thread(chat_graph.invoke, initial_state, config)
+        
+        # If it's a greeting or simple query, just use synthesis agent directly
+        if is_simple_greeting or is_simple_query:
+            final_state = initial_state
+        else:
+            final_state = await asyncio.to_thread(chat_graph.invoke, initial_state, config)
         
         logger.info(f"[CHAT] Graph execution complete")
         logger.info(f"[CHAT] Answer preview: {final_state['answer'][:100]}...")
+        logger.info(f"[CHAT] Has reference: {final_state.get('has_reference', False)}")
+        logger.info(f"[CHAT] Document names: {final_state.get('document_names', [])}")
+        
+        # Ensure document names are valid
+        document_names = final_state.get("document_names", [])
+        valid_document_names = [name for name in document_names if name and isinstance(name, str) and name.strip()]
         
         if chat_id not in chat_sessions:
             chat_sessions[chat_id] = {"messages": []}
@@ -518,13 +694,52 @@ async def chat_endpoint(
         context_manager.update_entity_memory(chat_id, final_state["answer"], role="assistant")
         logger.info(f"[CHAT] Updated entity memory with assistant response")
         
+        # Prepare reference documents info
+        reference_documents = []
+        onedrive_urls = final_state.get("onedrive_urls", [])
+        
+        # Double-check: if it's a simple greeting/query, don't include references
+        if is_simple_greeting or is_simple_query:
+            has_reference = False
+            reference_documents = []
+            valid_document_names = []
+            onedrive_urls = []
+            logger.info(f"[CHAT] Simple query - forcing has_reference to False")
+        else:
+            has_reference = final_state.get("has_reference", False) and len(valid_document_names) > 0
+            logger.info(f"[CHAT] Regular query - has_reference: {has_reference}")
+        
+        if has_reference and valid_document_names:
+            # Use OneDrive URLs if available, otherwise create folder URLs
+            for i, doc_name in enumerate(valid_document_names[:3]):  # Limit to top 3 documents
+                onedrive_url = onedrive_urls[i] if i < len(onedrive_urls) else None
+                
+                if not onedrive_url:
+                    # Fallback: construct URL from document name
+                    clean_name = doc_name.replace(' ', '_').replace('(', '').replace(')', '')
+                    onedrive_url = f"https://1drv.ms/b/s!{clean_name}?download=1"
+                
+                reference_documents.append({
+                    "name": doc_name,
+                    "preview_url": onedrive_url,
+                    "direct_link": onedrive_url,
+                    "has_preview": True
+                })
+        
         logger.info(f"[CHAT] Request complete for chat_id: {chat_id}")
+        logger.info(f"[CHAT] Final has_reference: {has_reference}")
+        logger.info(f"[CHAT] Final document names: {valid_document_names}")
+        logger.info(f"[CHAT] Final reference documents: {len(reference_documents)}")
         
         return ChatResponse(
             answer=final_state["answer"],
             sources=final_state.get("sources", []),
             chat_id=chat_id,
             reasoning_chain=final_state.get("reasoning_chain", []),
+            document_names=document_names,
+            onedrive_urls=onedrive_urls,
+            has_reference=has_reference,
+            reference_documents=reference_documents
         )
         
     except Exception as e:

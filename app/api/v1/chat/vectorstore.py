@@ -172,6 +172,9 @@ def add_texts(
     ids: Optional[Sequence[Union[int, str]]] = None,
     *,
     domain: str,
+    document_names: Optional[Sequence[str]] = None,
+    onedrive_ids: Optional[Sequence[str]] = None,
+    onedrive_urls: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
@@ -179,12 +182,36 @@ def add_texts(
     if not client.collection_exists(collection_name):
         create_collection(domain=domain)
 
-    metadatas = [{"page_content":text, "domain":domain} for text in texts]
+    metadatas_list = []
+    for i, text in enumerate(texts):
+        meta = {
+            "page_content": text,
+            "domain": domain,
+            "chunk_index": i,
+        }
+        
+        # Add document name if available
+        if document_names and i < len(document_names):
+            meta["document_name"] = document_names[i]
+
+        # Add OneDrive ID if available
+        if onedrive_ids and i < len(onedrive_ids):
+            meta["onedrive_id"] = onedrive_ids[i]
+        
+        # Add OneDrive URL if available
+        if onedrive_urls and i < len(onedrive_urls):
+            meta["onedrive_url"] = onedrive_urls[i]
+        
+        # Merge with any provided metadata
+        if metadatas and i < len(metadatas):
+            meta.update(metadatas[i])
+            
+        metadatas_list.append(meta)
 
     if ids is None:
         ids = [str(uuid.uuid4()) for _ in texts]
 
-    if not (len(texts) == len(metadatas) == len(ids)):
+    if not (len(texts) == len(metadatas_list) == len(ids)):
         raise ValueError("texts, metadatas, and ids must have the same length")
 
     vectors = _embed_texts(
@@ -197,7 +224,7 @@ def add_texts(
             vector=vec,
             payload=meta,
         )
-        for pid, vec, meta in zip(ids, vectors, metadatas)
+        for pid, vec, meta in zip(ids, vectors, metadatas_list)
     ]
     result = client.upsert(collection_name=collection_name, points=points)
     return result.dict() if hasattr(result, "dict") else result
@@ -211,6 +238,7 @@ def search_similar(
     model: str = DEFAULT_GEMINI_MODEL,
     output_dimensionality: Optional[int] = None,
     with_payload: bool = True,
+    score_threshold: Optional[float] = 0.3,
 ) -> List[Dict[str, Any]]:
     collection_name = get_collection_name(domain)
     client = QdrantClient(url=QDRANT_URL)
@@ -227,12 +255,19 @@ def search_similar(
         query_vector=qvec,
         limit=limit,
         with_payload=with_payload,
+        score_threshold=score_threshold,
     )
 
     out = []
     for h in hits:
         d = h.dict() if hasattr(h, "dict") else h
         out.append(d)
+    
+    # Log search results for debugging
+    logger.info(f"[VECTORSTORE] Search for '{query_text}' in '{domain}' returned {len(out)} results")
+    if out:
+        logger.info(f"[VECTORSTORE] Top result score: {out[0].get('score', 0):.3f}")
+    
     return out
 
 def search_across_domains(
