@@ -6,7 +6,9 @@ echo "🚀 Starting ASK Finance API deployment..."
 cd ~/ask-finance
 
 echo "📦 Pulling latest code..."
-git pull origin main
+git fetch origin main
+git reset --hard origin/main
+
 
 echo "🛑 Stopping and removing old containers, networks, and volumes..."
 docker compose down -v || echo "⚠️ No containers/networks/volumes to remove, continuing..."
