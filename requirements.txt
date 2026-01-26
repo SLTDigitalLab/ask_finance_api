@@ -277,3 +277,4 @@ readability-lxml
 lxml_html_clean
 google-generativeai
 python-docx
+python-pptx
