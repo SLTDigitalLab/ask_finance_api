@@ -2,7 +2,8 @@ from __future__ import annotations
 import os
 from typing import List, Optional, Sequence, Union, Dict, Any
 from qdrant_client import QdrantClient, models
-import google.generativeai as genai
+#import google.generativeai as genai
+from google import genai
 import uuid
 from dotenv import load_dotenv
 from ....mode import server
@@ -14,13 +15,18 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-DEFAULT_DIM = os.getenv("VECTORSTORE_DIM")
+#DEFAULT_DIM = os.getenv("VECTORSTORE_DIM")
+DEFAULT_DIM = int(os.getenv("VECTORSTORE_DIM", "768"))
 DEFAULT_GEMINI_MODEL = os.getenv("DEFAULT_GEMINI_EMBEDDING_MODEL")
 
-if server:
-    QDRANT_URL = os.getenv("VECTORSTORE_PROD_URL")
+
+if os.getenv("VECTORSTORE_URL"):
+    QDRANT_URL = os.getenv("VECTORSTORE_URL")
 else:
-    QDRANT_URL = os.getenv("VECTORSTORE_DEV_URL")
+    QDRANT_URL = os.getenv("VECTORSTORE_PROD_URL") if server else os.getenv("VECTORSTORE_DEV_URL")
+
+
+
 
 def get_collection_name(domain: str) -> str:
     """Generate collection name based on domain."""
@@ -53,16 +59,16 @@ def delete_collection(domain: str) -> None:
     else:
         logger.info("The collection already exists")
 
+#
+def get_collection(domain: str) -> Optional[Dict[str, Any]]:
+    collection_name = get_collection_name(domain)
+    client = QdrantClient(url=QDRANT_URL)
 
-def get_collection(domain: str) -> Dict[str, Any]:
-    if client.collection_exists(domain):
-        """Return full collection info as a dict."""
-        collection_name = get_collection_name(domain)
-        client = QdrantClient(url=QDRANT_URL)
-        info = client.get_collection(collection_name)
-        return info.dict() if hasattr(info, "dict") else info
-    else:
+    if not client.collection_exists(collection_name):
         return None
+
+    info = client.get_collection(collection_name)
+    return info.dict() if hasattr(info, "dict") else info
 
 
 def get_all_collections() -> List[Dict[str, Any]]:
@@ -137,6 +143,7 @@ def get_all_points(
 
     return all_points
 
+
 def _embed_texts(
     texts: Sequence[str],
     model: str = DEFAULT_GEMINI_MODEL,
@@ -146,23 +153,42 @@ def _embed_texts(
     if not GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is not set in the environment.")
 
-    genai.configure(api_key=GOOGLE_API_KEY)
+    if not texts:
+        return []
 
-    kwargs = {}
-    if output_dimensionality is not None:
-        kwargs["output_dimensionality"] = int(output_dimensionality)
+    # Ensure output dimensionality is an int
+    dim = int(output_dimensionality) if output_dimensionality is not None else 768
 
-    resp = genai.embed_content(
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+
+    resp = client.models.embed_content(
         model=model,
-        content=list(texts),
-        task_type="retrieval_document",
-        **kwargs,
+        contents=list(texts),
+        config={"output_dimensionality": dim},
     )
 
-    if "embedding" in resp:
-        return resp["embedding"]
-    else:
-        raise RuntimeError(f"Unexpected Gemini embedding response: {resp}")
+
+    # The SDK returns an object with `.embeddings`, and each embedding has `.values`
+    if not hasattr(resp, "embeddings") or resp.embeddings is None:
+        raise RuntimeError(f"Unexpected embedding response (no embeddings): {resp}")
+
+ 
+    vectors: List[List[float]] = []
+
+    for e in resp.embeddings:
+        if hasattr(e, "values") and e.values is not None:
+            vectors.append(list(e.values))
+        elif hasattr(e, "embedding") and hasattr(e.embedding, "values") and e.embedding.values is not None:
+            vectors.append(list(e.embedding.values))
+        else:
+            raise RuntimeError(f"Unexpected embedding format: {e}")
+
+    if len(vectors) != len(texts):
+        raise RuntimeError(f"Embedding count mismatch: texts={len(texts)} vectors={len(vectors)}")
+
+    return vectors
+
+
 
 
 
@@ -217,6 +243,19 @@ def add_texts(
     vectors = _embed_texts(
         texts=texts
     )
+
+    
+    if vectors is None:
+        raise ValueError("Embedding function returned None")
+
+    if len(vectors) != len(texts):
+        raise ValueError(f"Mismatch: texts={len(texts)} vectors={len(vectors)}")
+
+    # Optional: ensure vectors are not empty / wrong shape
+    bad = [i for i, v in enumerate(vectors) if not isinstance(v, list) or len(v) < 10]
+    if bad:
+        raise ValueError(f"Bad vectors at indexes: {bad[:5]}")
+
 
     points = [
         models.PointStruct(

@@ -20,7 +20,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 from .vectorstore import *
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_tavily import TavilySearch
+#from langchain_tavily import TavilySearch
+from langchain_community.tools.tavily_search import TavilySearchResults
+
 from .document_agent import document_search_agent
 from .app_types import AgentState
 import spacy
@@ -81,7 +83,7 @@ document_collections: Dict[str, Dict] = {}
 collection_documents: Dict[str, List[Dict]] = {}
 
 try:
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001") 
     logger.info("Successfully initialized Gemini embeddings")
 except Exception as e:
     logger.error(f"Failed to initialize Gemini embeddings: {e}")
@@ -186,15 +188,6 @@ def route_to_specific_agent(state: AgentState) -> str:
     logger.info(f"[ROUTER] Collection ID in state: {collection_id}")
     return "document_search_agent"
     
-    # # Use enhanced intent detector with destination context
-    # detected_intent = detect_intent_with_context(query)
-
-    # if detected_intent == "DOCUMENT":
-    #     logger.info(f"[ROUTER] Routing to document_search_agent for domain: {collection_id}")
-    #     return "document_search_agent"
-    # else:
-    #     logger.info(f"[ROUTER] Defaulting to document_search_agent for domain: {collection_id}")
-    #     return "document_search_agent"
     
 def save_chat_to_db(chat_id: str, role: str, message: str, domain: str = "default"):
     """Save chat message to database with domain."""
@@ -297,8 +290,7 @@ def synthesis_agent(state: AgentState) -> AgentState:
     logger.info(f"[SYNTHESIS] Document context length: {len(document_context) if document_context else 0}")
     logger.info(f"[SYNTHESIS] Document names: {document_names}")
 
-    # Check if this query should even have references
-    # Queries about personal information shouldn't have document references
+
     personal_info_keywords = [
         "my name", "your name", "who am i", "who are you", "i am", "my age",
         "my birthday", "my details", "personal information", "about me"
@@ -554,6 +546,22 @@ async def chat_endpoint(
     """Main chat endpoint with full context support."""
     try:
         chat_id = request.chat_id or str(uuid.uuid4())
+
+      
+        raw_domain = domain
+        domain = (domain or "").strip().lower()
+
+        # map known typo -> correct domain
+        DOMAIN_ALIASES = {
+            "ask_fiannce": "ask_finance",
+            "ask_fianance": "ask_finance",
+        }
+        domain = DOMAIN_ALIASES.get(domain, domain)
+
+        if raw_domain != domain:
+            logger.warning(f"[CHAT] Domain normalized: '{raw_domain}' -> '{domain}'")
+
+
         
         logger.info(f"[CHAT] Processing request for chat_id: {chat_id}, domain: {domain}")
         logger.info(f"[CHAT] Query: {request.query}")
