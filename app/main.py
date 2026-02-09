@@ -10,11 +10,10 @@ from api.v1.chat.document_agent import router as document_router
 import os
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.middleware.cors import CORSMiddleware
 from msal import ConfidentialClientApplication
 from starlette.middleware.sessions import SessionMiddleware
 
-IS_LOCAL = True  # Set to False in production
+IS_LOCAL = False  # Set to False in production
 
 app = FastAPI(title="ASK Finance Agent")
 Instrumentator().instrument(app).expose(app)
