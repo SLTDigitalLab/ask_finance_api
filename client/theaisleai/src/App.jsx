@@ -13,6 +13,10 @@ import ChatPage from "./chat/ChatInterface.jsx";
 import ChatIframe from "./chat/ChatIframe.jsx";
 import Layout from "./layouts/Layout.jsx";
 
+// --- NEW IMPORTS FOR MAINTENANCE MODE ---
+import MaintenanceOverlay from "./pages/MaintenanceOverlay.jsx";
+import { getMaintenanceStatus } from "./utils/maintenanceConfig.js";
+
 function App() {
   const { isLoggedIn, userObj } = useSelector((state) => state.user);
   const dispatch = useDispatch();
@@ -20,11 +24,16 @@ function App() {
   // const [apiKey, setApikey] = useState(null);
   const [isLoadingTier, setIsLoadingTier] = useState(false); // Track loading state
 
+  // --- CHECK MAINTENANCE STATUS ---
+  // This checks the .env file (or fallback) to see if we should block the screen
+  const isMaintenance = getMaintenanceStatus();
+
   const fetchTier = async () => {
     setIsLoadingTier(true); // Set loading state to indicate ongoing fetch
 
     try {
       const token = localStorage.getItem("authToken");
+      // Note: Ensure TIER is imported or defined in your constants if not globally available
       const tierResponse = await axios.get(TIER.GET_TIER, {
         headers: {
           Authorization: "Bearer " + token,
@@ -39,6 +48,7 @@ function App() {
       setIsLoadingTier(false); // Reset loading state after fetch
     }
   };
+
   useEffect(() => {
     const token = localStorage.getItem("authToken");
     if (token) {
@@ -55,6 +65,12 @@ function App() {
 
   return (
     <BrowserRouter>
+      {/* MAINTENANCE OVERLAY
+         If isMaintenance is true, this component renders ON TOP of everything else.
+         The CSS we defined ensures it blocks clicks to the Routes below.
+      */}
+      {isMaintenance && <MaintenanceOverlay />}
+
       <Routes>
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path=":domain" element={<Layout />}>
