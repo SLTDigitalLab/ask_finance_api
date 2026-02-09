@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     map_link: Optional[str]
     booking_details: Optional[Dict]
     booking_options: Optional[Dict]
+    user_email: Optional[str]
     collection_id: Optional[str]
     document_names: List[str]
     onedrive_urls: List[str]

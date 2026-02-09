@@ -16,42 +16,43 @@ import Layout from "./layouts/Layout.jsx";
 function App() {
   const { isLoggedIn, userObj } = useSelector((state) => state.user);
   const dispatch = useDispatch();
-  const [tierData, setTierData] = useState(null); // Store fetched tier data
-  // const [apiKey, setApikey] = useState(null);
-  const [isLoadingTier, setIsLoadingTier] = useState(false); // Track loading state
 
-  const fetchTier = async () => {
-    setIsLoadingTier(true); // Set loading state to indicate ongoing fetch
+  // const [tierData, setTierData] = useState(null); // Store fetched tier data
+  // // const [apiKey, setApikey] = useState(null);
+  // const [isLoadingTier, setIsLoadingTier] = useState(false); // Track loading state
 
-    try {
-      const token = localStorage.getItem("authToken");
-      const tierResponse = await axios.get(TIER.GET_TIER, {
-        headers: {
-          Authorization: "Bearer " + token,
-        },
-      });
-      // console.log(apiKeyResponse.data.result.api_key)
-      // setApikey(apiKeyResponse.data.result.api_key)
-      setTierData(tierResponse.data.result.tier.tier); // Update state with fetched data
-    } catch (error) {
-      console.error("Error fetching tier:", error); // Handle errors gracefully
-    } finally {
-      setIsLoadingTier(false); // Reset loading state after fetch
-    }
-  };
-  useEffect(() => {
-    const token = localStorage.getItem("authToken");
-    if (token) {
-      dispatch(setIsLoggedIn(true));
-    }
-    const userRole = localStorage.getItem("role");
-    if (userRole) {
-      dispatch(setUser({ ...userObj, role: userRole }));
-    }
-    // localStorage.setItem("apiKey",apiKey)
-    // dispatch(setApiKey({apiKey}))
-    fetchTier();
-  }, []);
+  // const fetchTier = async () => {
+  //   setIsLoadingTier(true); // Set loading state to indicate ongoing fetch
+
+  //   try {
+  //     const token = localStorage.getItem("authToken");
+  //     const tierResponse = await axios.get(TIER.GET_TIER, {
+  //       headers: {
+  //         Authorization: "Bearer " + token,
+  //       },
+  //     });
+  //     // console.log(apiKeyResponse.data.result.api_key)
+  //     // setApikey(apiKeyResponse.data.result.api_key)
+  //     setTierData(tierResponse.data.result.tier.tier); // Update state with fetched data
+  //   } catch (error) {
+  //     console.error("Error fetching tier:", error); // Handle errors gracefully
+  //   } finally {
+  //     setIsLoadingTier(false); // Reset loading state after fetch
+  //   }
+  // };
+  // useEffect(() => {
+  //   const token = localStorage.getItem("authToken");
+  //   if (token) {
+  //     dispatch(setIsLoggedIn(true));
+  //   }
+  //   const userRole = localStorage.getItem("role");
+  //   if (userRole) {
+  //     dispatch(setUser({ ...userObj, role: userRole }));
+  //   }
+  //   // localStorage.setItem("apiKey",apiKey)
+  //   // dispatch(setApiKey({apiKey}))
+  //   fetchTier();
+  // }, []);
 
   return (
     <BrowserRouter>

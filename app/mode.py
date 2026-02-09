@@ -1,5 +1,5 @@
 
-server=True
+server=False
 
 staging=True
 

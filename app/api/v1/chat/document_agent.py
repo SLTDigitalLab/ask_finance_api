@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 import trafilatura
 from readability import Document
-from ....db.psql_connector import DB, default_config
+from db.psql_connector import DB, default_config
 from .vectorstore import *
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.text_splitter import RecursiveCharacterTextSplitter

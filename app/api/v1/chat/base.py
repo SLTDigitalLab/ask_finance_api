@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, APIRouter
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Union
@@ -8,12 +8,10 @@ from datetime import datetime
 import logging
 import os
 from dotenv import load_dotenv
-from app.db.psql_connector import DB, default_config
+from db.psql_connector import DB, default_config
 import re
 from langchain.prompts.prompt import PromptTemplate
 from langchain.prompts.chat import ChatPromptTemplate
-
-
 from langchain.chains import LLMChain
 from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -549,14 +547,26 @@ def get_or_create_chat_session(chat_id: str = None) -> str:
 async def chat_endpoint(
     request: ChatRequest,
     domain: str,
-    # token: str = Depends(token_manager.verify_frontend_token)
+    http_request: Request
 ):
     """Main chat endpoint with full context support."""
+
+    user_access = http_request.session.get("user_access", {})
+    
+    # Check if the user is logged into THIS specific domain
+    if domain not in user_access:
+        logger.warning(f"[AUTH] User attempt to access '{domain}' without login.")
+        raise HTTPException(status_code=401, detail=f"Not authenticated for domain: {domain}")
+        
+    user_data = user_access[domain]
+    user_email = user_data.get("email", "unknown_user")
+
     try:
         chat_id = request.chat_id or str(uuid.uuid4())
         
         logger.info(f"[CHAT] Processing request for chat_id: {chat_id}, domain: {domain}")
         logger.info(f"[CHAT] Query: {request.query}")
+        logger.info(f"[CHAT] User: {user_email}")
 
         # Check if this is a simple greeting (no reference needed)
         is_simple_greeting = any(
@@ -629,6 +639,7 @@ async def chat_endpoint(
             document_context=None,
             reasoning_chain=[],
             previous_context=previous_context,
+            user_email=user_email,
             conversation_summary=summary,
             collection_id=domain,
             document_names=[],
@@ -749,14 +760,12 @@ async def chat_endpoint(
 
 @router.get("/health", tags=["Chat"])
 async def health_check(
-    # token: str = Depends(verify_token)
 ):
     """Health check endpoint."""
     return {"status": "healthy. Lets start", "timestamp": datetime.now()}
 
 @router.get("/debug/check-data", tags=["Database"])
 async def debug_check_data(
-    # token: str = Depends(verify_token)
 ):
     """Simple check to see what's in the database."""
     try:
@@ -787,7 +796,6 @@ async def debug_check_data(
 
 @router.get("/sessions", tags=["Database"])
 async def get_all_chat_sessions(
-    # token: str = Depends(verify_token)
 ):
     """Get all unique chat session IDs from the database."""
     try:
@@ -843,7 +851,6 @@ async def get_all_chat_sessions(
 @router.get("/session/{session_id}/history", tags=["Database"])
 async def get_session_history(
     session_id: str,
-    # token: str = Depends(verify_token)
     ):
     """Get chat history for a specific session ID."""
     try:
@@ -875,7 +882,6 @@ async def get_session_history(
 @router.delete("/session/{session_id}", tags=["Database"])
 async def delete_session(
     session_id: str,
-    # token: str = Depends(token_manager.verify_admin_token)
     ):
     """Delete all messages for a specific session ID."""
     try:

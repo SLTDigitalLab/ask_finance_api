@@ -1,5 +1,5 @@
-//export const BASE_URL = "http://localhost:8000/"
-export const BASE_URL = "https://askfinance.sltdigitallab.lk/"
+export const BASE_URL = "http://localhost:8000/"
+// export const BASE_URL = "https://askfinance.sltdigitallab.lk/"
 
 export const CHAT = {
     CHAT_API_URL: BASE_URL + "api/v1/chat/vector_multi",
@@ -10,6 +10,12 @@ export const CHAT = {
     CHAT_HEADER: BASE_URL + "api/v1/chat/history/header",
     GET_PDF: BASE_URL + "api/v1/chat/get-pdf",
     MULTI_AGENT_CHAT: (domain) => `${BASE_URL}api/v1/${domain}/chat`,
+}
+
+export const AUTH = {
+    LOGIN: `${BASE_URL}api/login`,
+    LOGOUT: `${BASE_URL}api/logout`,
+    CHECK_AUTH: `${BASE_URL}api/welcome`,
 }
 
 export const END_POINTS = {
