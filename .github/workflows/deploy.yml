@@ -1,0 +1,28 @@
+name: Deploy ASK Finance API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # ✅ Entire job can run up to 2 hours
+
+    steps:
+      # Step 1: Checkout your repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Deploy via SSH using appleboy action
+      - name: Deploy to EKB-Agent-Store via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 120m   # ✅ SSH command allowed to run 2 hours
+          script: |
+            cd ~/ask-finance
+            bash scripts/deploy.sh
