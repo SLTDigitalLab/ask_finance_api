@@ -142,3 +142,7 @@ dmypy.json
 *.jlb
 
 .idea
+
+# ignore .DS_Store file for Mac users
+
+.DS_Store
