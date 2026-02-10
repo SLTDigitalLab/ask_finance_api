@@ -12,6 +12,9 @@ import axios from "axios";
 import ChatPage from "./chat/ChatInterface.jsx";
 import ChatIframe from "./chat/ChatIframe.jsx";
 import Layout from "./layouts/Layout.jsx";
+import CopilotChatInterface from "./chat/CopilotChatInterface.jsx";
+
+
 
 function App() {
   const { isLoggedIn, userObj } = useSelector((state) => state.user);
@@ -59,6 +62,7 @@ function App() {
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path=":domain" element={<Layout />}>
           <Route path="chat" element={<ChatPage />} />
+          <Route path="chat/copilot" element={<CopilotChatInterface />} />
           <Route path="iframe" element={<ChatIframe />} />
         </Route>
       </Routes>

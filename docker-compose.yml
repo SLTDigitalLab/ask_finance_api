@@ -57,6 +57,16 @@ services:
     networks:
       - net
 
+  #copilot service
+  copilot:
+    build: ./copilot_backend
+    container_name: askfinance-copilot
+    restart: always
+    expose:
+      - "5003"
+    networks:
+      - net
+
   vector-db:
     image: qdrant/qdrant
     container_name: askfinance-vector-db
