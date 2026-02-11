@@ -61,8 +61,8 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path=":domain" element={<Layout />}>
-          <Route path="chat" element={<ChatPage />} />
-          <Route path="chat/copilot" element={<CopilotChatInterface />} />
+          <Route path="chat" element={<CopilotChatInterface />} />
+          {/* <Route path="chat/copilot" element={<CopilotChatInterface />} /> */}
           <Route path="iframe" element={<ChatIframe />} />
         </Route>
       </Routes>

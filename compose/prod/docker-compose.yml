@@ -62,8 +62,8 @@ services:
     build: ./copilot_backend
     container_name: askfinance-copilot
     restart: always
-    expose:
-      - "5003"
+    ports:
+      - "5003:5003"  
     networks:
       - net
 

@@ -28,6 +28,7 @@ import SendIcon from "@mui/icons-material/Send";
 import { useParams } from "react-router-dom";
 import { DirectLine } from "botframework-directlinejs";
 
+
 // IMPORTANT:
 // This component uses the SAME UI as ChatInterface,
 // but sends/receives messages via DirectLine (Copilot),
@@ -491,7 +492,7 @@ function CopilotChatInterface() {
           </Text>
 
           <Image
-            src="/public/embryo-removebg.png"
+            src="/embryo-removebg.png"
             alt="SLT Digital Lab Logo"
             h="35px"
             objectFit="contain"

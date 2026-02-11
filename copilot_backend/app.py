@@ -5,7 +5,9 @@ import requests
 app = Flask(__name__)
 CORS(app)
 
-DIRECT_LINE_TOKEN_URL = "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/crad5_agent1_8GBRHa/directline/token?api-version=2022-03-01-preview"
+#DIRECT_LINE_TOKEN_URL = "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/crad5_agent1_8GBRHa/directline/token?api-version=2022-03-01-preview"
+
+DIRECT_LINE_TOKEN_URL = "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/crad5_agent3/directline/token?api-version=2022-03-01-preview"
 
 @app.route("/")
 def index():
