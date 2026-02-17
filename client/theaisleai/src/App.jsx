@@ -10,17 +10,44 @@ import ChatIframe from "./chat/ChatIframe.jsx";
 import Layout from "./layouts/Layout.jsx";
 import CopilotChatInterface from "./chat/CopilotChatInterface.jsx";
 
+// function DomainChatRouter() {
+//   const { domain } = useParams();
+
+//   // ONLY Ask Finance goes to Copilot
+//   if (domain === "ask_finance") {
+//     return <CopilotChatInterface />;
+//   }
+
+//   // Everything else goes to LangGraph backend
+//   return <ChatPage />;
+// }
+
 function DomainChatRouter() {
   const { domain } = useParams();
+  const d = (domain || "").toLowerCase();
 
-  // ONLY Ask Finance goes to Copilot
-  if (domain === "ask_finance") {
+  // ✅ Put the domains that should use Copilot here
+  const COPILOT_DOMAINS = new Set([
+    "ask_finance",
+    "ask_enterprise",
+    // "ask_admin",
+    // "ask_products",
+    // "ask_it",
+    // "ask_process",
+    // "ask_mintcrm",
+    // "ask_scm",
+    // "ask_procurement",
+  ]);
+
+  // ✅ Copilot for selected domains
+  if (COPILOT_DOMAINS.has(d)) {
     return <CopilotChatInterface />;
   }
 
-  // Everything else goes to LangGraph backend
+  // ✅ FastAPI/LangGraph for everything else
   return <ChatPage />;
 }
+
 
 function App() {
   const { isLoggedIn, userObj } = useSelector((state) => state.user);

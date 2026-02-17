@@ -48,8 +48,20 @@ function CopilotChatInterface() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const btnRef = React.useRef();
 
-  const { domain } = useParams();
+  //const { domain } = useParams();
+  const domainFromPath = (window.location.pathname.split("/")[1] || "").toLowerCase();
+  const domain = domainFromPath;
 
+
+  // const normalized = (domain || "").toLowerCase();
+
+  // const isFinance =
+  //   normalized === "ask_finance" ||
+  //   normalized === "ask_fiannce" ||
+  //   normalized === "ask_fianance";
+
+  // if (!isFinance) return null;
+  
   const [isLoading, setIsLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const [question, setQuestion] = useState("");
@@ -66,6 +78,8 @@ function CopilotChatInterface() {
 
   // Fetch token + init DirectLine on mount
   useEffect(() => {
+
+    //if (!isFinance) return;
     let cancelled = false;
 
     const initCopilot = async () => {
@@ -75,7 +89,9 @@ function CopilotChatInterface() {
         const tokenUrl =
           import.meta.env.VITE_COPILOT_TOKEN_URL || "/copilot/get_token";
 
-        const res = await fetch(tokenUrl, { cache: "no-store" });
+        //const res = await fetch(tokenUrl, { cache: "no-store" });
+        const res = await fetch(`${tokenUrl}?domain=${encodeURIComponent(domain)}`, { cache: "no-store" });
+
         if (!res.ok) {
           throw new Error(`Token fetch failed (${res.status}) from ${tokenUrl}`);
         }
@@ -152,7 +168,8 @@ function CopilotChatInterface() {
         }
       } catch {}
     };
-  }, [toast]);
+  }, [toast, domain]);
+
 
   // Send message to Copilot
   const handleSubmit = async (e) => {
