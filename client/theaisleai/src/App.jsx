@@ -9,35 +9,32 @@ import ChatPage from "./chat/ChatInterface.jsx";
 import ChatIframe from "./chat/ChatIframe.jsx";
 import Layout from "./layouts/Layout.jsx";
 import CopilotChatInterface from "./chat/CopilotChatInterface.jsx";
+import AskEnterpriseChat from "./chat/AskEnterpriseChat";
 
-// function DomainChatRouter() {
-//   const { domain } = useParams();
-
-//   // ONLY Ask Finance goes to Copilot
-//   if (domain === "ask_finance") {
-//     return <CopilotChatInterface />;
-//   }
-
-//   // Everything else goes to LangGraph backend
-//   return <ChatPage />;
-// }
 
 function DomainChatRouter() {
   const { domain } = useParams();
   const d = (domain || "").toLowerCase();
 
+  // ✅ 1) Enterprise gets its OWN UI
+  if (d === "ask_enterprise") {
+    return <AskEnterpriseChat />;
+  }
+
   // ✅ Put the domains that should use Copilot here
   const COPILOT_DOMAINS = new Set([
     "ask_finance",
-    "ask_enterprise",
+    // "ask_enterprise",
     // "ask_admin",
-    // "ask_products",
+    "ask_products",
     // "ask_it",
     // "ask_process",
     // "ask_mintcrm",
     // "ask_scm",
     // "ask_procurement",
   ]);
+
+  //console.log("DomainChatRouter:", d, "copilot?", COPILOT_DOMAINS.has(d));
 
   // ✅ Copilot for selected domains
   if (COPILOT_DOMAINS.has(d)) {
@@ -80,7 +77,9 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/ask_fiannce/chat" replace />} />
+        
+        <Route path="/" element={<Navigate to="/ask_finance/chat" replace />} />
+        <Route path="/ask_enterprise/chat" element={<AskEnterpriseChat />} />
         <Route path=":domain" element={<Layout />}>
           <Route path="chat" element={<DomainChatRouter />} />
           <Route path="iframe" element={<ChatIframe />} />
