@@ -22,7 +22,7 @@ export const userSlice = createSlice({
     },
     reducers: {
         setUser: (state, action) => {
-            state.userObj = action.payload;
+            state.userObj = { ...state.userObj, ...action.payload };
         },
         setIsLoggedIn: (state, action) => {
             state.isLoggedIn = action.payload;
@@ -57,7 +57,7 @@ export const userSlice = createSlice({
             state.usageCost = 0;
             state.currency = 1;
         },
-        setCurrency: (state) => {
+        setCurrency: (state, action) => {
             state.currency = action.payload;
         }
     },

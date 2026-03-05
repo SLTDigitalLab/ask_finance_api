@@ -6,7 +6,7 @@ from qdrant_client import QdrantClient, models
 from google import genai
 import uuid
 from dotenv import load_dotenv
-from ....mode import server
+from mode import server
 import logging
 
 logging.basicConfig(level=logging.INFO)

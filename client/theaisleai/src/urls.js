@@ -12,6 +12,12 @@ export const CHAT = {
     MULTI_AGENT_CHAT: (domain) => `${BASE_URL}api/v1/${domain}/chat`,
 }
 
+export const AUTH = {
+    LOGIN: `${BASE_URL}api/login`,
+    LOGOUT: `${BASE_URL}api/logout`,
+    CHECK_AUTH: `${BASE_URL}api/welcome`,
+}
+
 export const END_POINTS = {
     AWS_AUTHENTICATE: BASE_URL + "api/v1/authenticate-aws-users",
     LIST_AWS_CREDENTIALS: BASE_URL + "api/v1/aws-buckets",

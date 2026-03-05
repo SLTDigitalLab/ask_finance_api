@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Button,
   Flex,
@@ -14,8 +14,11 @@ import {
   Box,
   useColorMode,
   VStack,
+  HStack,
+  Text,
+  Spinner,
 } from "@chakra-ui/react";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { NavLink, useNavigate, useParams, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import LightModeIcon from "@mui/icons-material/LightMode";
@@ -27,7 +30,9 @@ import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useDispatch, useSelector } from "react-redux";
-import { useLocation } from "react-router-dom";
+import axios from "axios";
+import { AUTH } from "../urls";
+import { setIsLoggedIn, setUser } from "../redux/reducers/userSlice";
 
 const MotionFlex = motion(Flex);
 const MotionButton = motion(Button);
@@ -48,10 +53,65 @@ function NavBar() {
 
   const { colorMode, toggleColorMode } = useColorMode();
 
+  const [checkingAuth, setCheckingAuth] = useState(false);
+
   const [activeSubMenu, setActiveSubMenu] = useState(null);
-  const toggleSubMenu = (menu, event) => {
-    event.stopPropagation();
-    setActiveSubMenu(activeSubMenu === menu ? null : menu);
+
+  // Check Authentication Status when DOMAIN changes
+  useEffect(() => {
+    // If we are on the root /chat (no domain), we don't check auth or allow login
+    if (!domain) {
+        dispatch(setIsLoggedIn(false));
+        setCheckingAuth(false);
+        return;
+    }
+
+    const checkAuthStatus = async () => {
+      setCheckingAuth(true);
+      try {
+        // Pass the specific domain to check if we are logged in THERE
+        const res = await axios.get(`${AUTH.CHECK_AUTH}?domain=${domain}`, { 
+            withCredentials: true,
+            timeout: 5000
+        });
+        
+        if (res.data.authenticated) {
+          dispatch(setIsLoggedIn(true));
+          dispatch(setUser({
+            ...userObj,
+            firstName: res.data.name,
+            email: res.data.email,
+          }));
+        } else {
+          dispatch(setIsLoggedIn(false));
+        }
+      } catch (err) {
+        dispatch(setIsLoggedIn(false));
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+    
+    checkAuthStatus();
+  }, [dispatch, domain]); // Re-run when domain changes
+
+  const handleLogin = () => {
+    if (domain) {
+        const loginUrl = `${AUTH.LOGIN}?domain=${domain}`;
+        console.log("Redirecting to:", loginUrl); // <--- Check Console
+        window.location.href = loginUrl;
+    } else {
+        console.error("No domain found, cannot login.");
+    }
+  };
+
+  const handleLogout = () => {
+    if (domain) {
+        // Logout specifically from this domain
+        window.location.href = `${AUTH.LOGOUT}?domain=${domain}`;
+    } else {
+        window.location.href = AUTH.LOGOUT;
+    }
   };
 
   const formatDomainName = (domainName) => {
@@ -145,17 +205,25 @@ function NavBar() {
 
       {/* Desktop actions (Right) */}
       <Flex display={{ base: "none", md: "flex" }} align="center" gap={6}>
-        {isLoggedIn && (
-          <>
-            <MotionButton
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              bg={buttonBgColor}
-              color={buttonTextColor}
-            >
-              <NavLink to="/chat">Chat</NavLink>
-            </MotionButton>
-          </>
+        {checkingAuth ? (
+          <Spinner size="sm" />
+        ) : isLoggedIn && domain ? (
+          <HStack spacing={4}>
+            <Text fontSize="sm" fontWeight="bold" display={{ base: "none", md: "block" }}>
+              Hi, {userObj.firstName}
+            </Text>
+            <Button size="sm" colorScheme="red" variant="ghost" onClick={handleLogout}>
+              Logout
+            </Button>
+          </HStack>
+        ) : domain ? (
+            // Only show login button if a domain is present
+          <Button size="sm" colorScheme="blue" onClick={handleLogin}>
+            Login with Microsoft
+          </Button>
+        ) : (
+            // No button on root /chat
+            <Box w="100px" /> 
         )}
 
         {/* Dark Mode Toggle */}
@@ -175,49 +243,22 @@ function NavBar() {
           <Menu closeOnSelect={false}>
             <MenuButton as={IconButton} icon={<MenuIcon />} variant="outline" />
             <MenuList>
-              {isLoggedIn && (
+              {isLoggedIn && domain && (
                 <VStack align="start" spacing={0}>
-                  <MotionMenuItem as={NavLink} to="/virtualCity/chat">
-                    Chat
-                  </MotionMenuItem>
-
-                  <MotionMenuItem onClick={(e) => toggleSubMenu("history", e)}>
-                    History &amp; Usage{" "}
-                    <ExpandMoreIcon
-                      style={{
-                        marginLeft: 8,
-                        transform:
-                          activeSubMenu === "history"
-                            ? "rotate(180deg)"
-                            : "rotate(0deg)",
-                        transition: "0.3s",
-                      }}
-                    />
-                  </MotionMenuItem>
-                  {activeSubMenu === "history" && (
-                    <>
-                      <MotionMenuItem as={NavLink} to="/history">
-                        History
-                      </MotionMenuItem>
-                      <MotionMenuItem as={NavLink} to="/usage">
-                        Usage
-                      </MotionMenuItem>
-                    </>
-                  )}
-
-                  <MotionMenuItem as={NavLink} to="/profile">
-                    <AccountCircleIcon style={{ marginRight: 8 }} /> Profile
-                  </MotionMenuItem>
+                  <MotionMenuItem as={NavLink} to={`/${domain}/chat`}>Chat</MotionMenuItem>
+                  <MotionMenuItem as={NavLink} to="/profile">Profile</MotionMenuItem>
+                  <MotionMenuItem onClick={handleLogout}>Logout</MotionMenuItem>
                 </VStack>
               )}
 
               {/* Dark mode toggle */}
               <MotionMenuItem onClick={toggleColorMode}>
-                {colorMode === "light" ? <DarkModeIcon /> : <LightModeIcon />}
-                <Box as="span" ml={2}>
-                  {colorMode === "light" ? "Dark Mode" : "Light Mode"}
-                </Box>
+                {colorMode === "light" ? "Dark Mode" : "Light Mode"}
               </MotionMenuItem>
+              
+              {!isLoggedIn && domain && (
+                 <MotionMenuItem onClick={handleLogin}>Login with Microsoft</MotionMenuItem>
+              )}
             </MenuList>
           </Menu>
         </Box>

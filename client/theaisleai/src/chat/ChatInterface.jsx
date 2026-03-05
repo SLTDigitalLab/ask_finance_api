@@ -28,9 +28,10 @@ import { v4 as uuidv4 } from "uuid";
 import FaceIcon from "@mui/icons-material/Face";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import SendIcon from "@mui/icons-material/Send";
-import { CHAT, BASE_URL } from "../urls";
+import { CHAT, BASE_URL, AUTH } from "../urls";
 import { keyframes } from "@emotion/react";
 import { useParams } from "react-router-dom";
+import { setIsLoggedIn } from "../redux/reducers/userSlice";
 
 const spin = keyframes`
   0% { transform: rotate(0deg); }
@@ -52,7 +53,7 @@ function ChatInterface() {
   const [msgCount, setMsgCount] = useState(0);
   const [question, setQuestion] = useState("");
   const toast = useToast();
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const dispatch = useDispatch();
   const navigate = useNavigate();
   const [chatMode, setChatMode] = useState("short");
   const [chatSessionId, setChatSessionId] = useState(null);
@@ -64,6 +65,7 @@ function ChatInterface() {
   const [page, setPage] = useState(0);
   const [refHeader, setRefHeader] = useState("");
   const btnRef = React.useRef();
+  const { isLoggedIn } = useSelector((state) => state.user);
   const { domain } = useParams();
 
   const [referenceDocs, setReferenceDocs] = useState([]);
@@ -86,18 +88,34 @@ function ChatInterface() {
     }
   }, [question, chatHistory]);
 
+  // When domain changes, reset chat history or session if needed
+  useEffect(() => {
+      setChatHistory([]);
+      setChatSessionId(null);
+  }, [domain]);
+
   // Send Chat Question
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+
+    if (!isLoggedIn) {
+      toast({
+        title: "Please Login",
+        description: "You must be logged in to ${domain ? domain.replace('_', ' ').toUpperCase() : 'the system'} to start chatting.",
+        status: "warning",
+        duration: 3000,
+      });
+      return;
+    }
+
     setIsLoading(true);
+    const userQuery = question;
+    setQuestion("");
 
     try {
       // Ensure session ID exists
-      let currentChatId = chatSessionId;
-      if (!currentChatId) {
-        currentChatId = uuidv4();
-        setChatSessionId(currentChatId);
-      }
+      let currentChatId = chatSessionId || uuidv4();
+      if (!chatSessionId) setChatSessionId(currentChatId);
 
       // Send query to backend with chat_id
       const response = await axios.post(
@@ -108,9 +126,9 @@ function ChatInterface() {
           domain: domain,
         },
         {
+          withCredentials: true,
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${FRONTEND_TOKEN}`,
           },
         }
       );
@@ -141,14 +159,17 @@ function ChatInterface() {
 
       setQuestion(""); // clear input
     } catch (error) {
-      console.error("Multi-agent chat error:", error);
-      toast({
-        title: "An error occurred",
-        description: error.response?.data?.detail || error.message,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      console.error("Chat Error:", error);
+      if (error.response?.status === 401) {
+        dispatch(setIsLoggedIn(false));
+        toast({ title: "Session Expired", description: "Please login again.", status: "error" });
+      } else {
+        toast({
+          title: "Error",
+          description: error.response?.data?.detail || "Failed to get response.",
+          status: "error",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -295,7 +316,6 @@ function ChatInterface() {
   };
 
   return (
-    
     <Flex direction="column" h="80vh" w="100%" justify="center" align="center">
       {/* Centered main container, same width as before (85%) */}
       <Box
@@ -311,7 +331,14 @@ function ChatInterface() {
       >
         <VStack spacing={2} p={4} pb={0} flexGrow={1}>
           <VStack w="full" h="65vh" alignItems="left" p={3} overflowY="auto">
-            {chatHistory.length === 0 ? (
+            {!isLoggedIn ? (
+              <VStack spacing={4} align="center" justify="center" h="100%">
+                <Image src="/12.png" boxSize="150px" opacity="0.4" />
+                <Text fontSize="lg" color="gray.500">
+                  {domain ? `Please log in to ${domain.replace('_', ' ').toUpperCase()} to chat` : "Select a domain to start"}
+                </Text>
+              </VStack>
+            ) : chatHistory.length === 0 ? (
               <VStack
                 spacing={1}
                 align="center"
@@ -455,6 +482,8 @@ function ChatInterface() {
               minW={0}
               bg={inputBgColor}
               color={textColor}
+              isDisabled={!isLoggedIn || isLoading}
+              placeholder={isLoggedIn ? "" : "Please log in"}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && question.trim() !== "") {
                   e.preventDefault(); // prevents form submission reload
@@ -515,7 +544,7 @@ function ChatInterface() {
 
 
     
-    
+  
   );
 }
 
