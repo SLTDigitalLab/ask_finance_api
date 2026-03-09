@@ -24,13 +24,13 @@ function DomainChatRouter() {
   // ✅ Put the domains that should use Copilot here
   const COPILOT_DOMAINS = new Set([
     "ask_finance",
-    // "ask_enterprise",
     // "ask_admin",
     "ask_products",
     // "ask_it",
-    // "ask_process",
-    // "ask_mintcrm",
-    // "ask_scm",
+    "ask_process",
+    "ask_mintcrm",
+    "ask_scm",
+    "backoffice_email",
     // "ask_procurement",
   ]);
 

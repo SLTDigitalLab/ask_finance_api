@@ -1,5 +1,6 @@
 import React from "react";
 import EmbryoLogo from "../assets/embryo-removebg.png";
+import AIBot from "../assets/ai-bot.png";
 
 const COPILOT_URL =
   "https://copilotstudio.microsoft.com/environments/Default-534253fc-dfb6-462f-b5ca-cbe81939f5ee/bots/crad5_agent2/webchat?__version__=2&enableFileAttachment=true";
@@ -55,7 +56,7 @@ export default function AskEnterpriseChat() {
           font-size: 14px;
           font-weight: 500;
           letter-spacing: 0.25em;
-          text-transform: uppercase;
+          
           color: rgba(255,255,255,0.75);
         }
 
@@ -63,7 +64,7 @@ export default function AskEnterpriseChat() {
           margin-top: 22px;
           background: rgba(255,255,255,0.95);
           border-radius: 20px;
-          height: 520px;
+          height: 560px;
           overflow: hidden;
           box-shadow:
             0 32px 90px rgba(0,0,0,0.45),
@@ -94,6 +95,27 @@ export default function AskEnterpriseChat() {
           text-transform: uppercase;
         }
 
+        .enterprise-header{
+          display:flex;
+          justify-content:center;
+          align-items:center;
+          gap:30px;
+          margin-bottom:10px;
+        }
+
+        .enterprise-bot{
+          height:110px;
+          width:auto;
+          filter: drop-shadow(0 8px 20px rgba(0,0,0,0.4));
+          animation: floatBot 4s ease-in-out infinite;
+        }
+
+        @keyframes floatBot{
+          0%{ transform: translateY(0px);}
+          50%{ transform: translateY(-6px);}
+          100%{ transform: translateY(0px);}
+        }
+
         .enterprise-footer-logo {
           height: 38px; /* was 32px */
           width: auto;
@@ -104,8 +126,14 @@ export default function AskEnterpriseChat() {
       {/* ✅ Page */}
       <div className="enterprise-page">
         <div className="enterprise-container">
-          <h1 className="enterprise-title">AIye</h1>
-          <div className="enterprise-subtitle">by SLTM Enterprise</div>
+          <div className="enterprise-header">
+            <div>
+              <h1 className="enterprise-title">Ai e</h1>
+              <div className="enterprise-subtitle">By SLTMobitel Enterprise</div>
+            </div>
+
+            <img src={AIBot} alt="AI Bot" className="enterprise-bot" />
+          </div>
 
           <div className="enterprise-card">
             <iframe

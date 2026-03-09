@@ -11,6 +11,11 @@ TOKEN_URLS = {
     "ask_enterprise": "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/crad5_agent2/directline/token?api-version=2022-03-01-preview",
     "ask_products": "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/copilots_header_813e8/directline/token?api-version=2022-03-01-preview",
 
+    "ask_scm": "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/copilots_header_797da/directline/token?api-version=2022-03-01-preview",
+    "ask_process": "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/crad5_agent3_c0p6qM/directline/token?api-version=2022-03-01-preview",
+    "ask_mintcrm": "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/copilots_header_8f16f/directline/token?api-version=2022-03-01-preview",
+    "backoffice_email": "https://default534253fcdfb6462fb5cacbe81939f5.ee.environment.api.powerplatform.com/powervirtualagents/botsbyschema/copilots_header_a245b/directline/token?api-version=2022-03-01-preview",
+
 }
 
 @app.route("/")
