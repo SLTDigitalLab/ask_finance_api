@@ -31,6 +31,7 @@ function DomainChatRouter() {
     "ask_mintcrm",
     "ask_scm",
     "backoffice_email",
+    "big_cleaning_day",
     // "ask_procurement",
   ]);
 

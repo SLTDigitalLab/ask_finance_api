@@ -10,9 +10,10 @@
     padding: 15px;
 }
 
-html, body {
+html, body, #root {
     height: 100%; 
   }
+  
   
   #root, /* Or the ID of your main application container */
   .chakra-container, /* Or the class of Chakra's main container */
@@ -21,6 +22,7 @@ html, body {
     display: flex;
     flex-direction: column;
   }
+  
 
   .activeLink {
     background-color: #457b9d; 

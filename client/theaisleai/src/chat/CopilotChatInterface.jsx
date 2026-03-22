@@ -280,7 +280,7 @@ function CopilotChatInterface() {
   };
 
   return (
-    <Flex direction="column" h="80vh" w="100%" justify="center" align="center">
+    <Flex direction="column" h="100%" minH="0">
       {/* Centered main container, same width as before (85%) */}
       <Box
         h="100%"
@@ -292,6 +292,7 @@ function CopilotChatInterface() {
         display="flex"
         mx="auto"
         position="relative"
+        bottom="5px"
       >
         <VStack spacing={2} p={4} pb={0} flexGrow={1}>
           <VStack w="full" h="65vh" alignItems="left" p={3} overflowY="auto">
@@ -488,14 +489,10 @@ function CopilotChatInterface() {
       {/* --- FOOTER --- */}
       <Box
         as="footer"
-        position="fixed"
-        bottom="0"
-        left="0"
-        right="0"
-        zIndex={100}
-        py={{ base: 2, md: 3 }}
+        mt="auto"
+        pt={2} 
+        pb={4}
         bg={useColorModeValue("gray.50", "gray.900")}
-        borderColor={useColorModeValue("gray.200", "gray.700")}
       >
         <Flex justify="center" align="center" gap={3}>
           <Text

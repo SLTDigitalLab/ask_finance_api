@@ -95,19 +95,23 @@ export default function AskEnterpriseChat() {
           text-transform: uppercase;
         }
 
-        .enterprise-header{
-          display:flex;
-          justify-content:center;
-          align-items:center;
-          gap:30px;
+         .enterprise-header{
+          position:relative;
+          text-align:center;
           margin-bottom:10px;
+
         }
 
         .enterprise-bot{
-          height:110px;
+
+          position:absolute;
+          left: calc(50% + 120px);
+          top:-10px;
+          height:95px;
           width:auto;
           filter: drop-shadow(0 8px 20px rgba(0,0,0,0.4));
           animation: floatBot 4s ease-in-out infinite;
+        }
         }
 
         @keyframes floatBot{
