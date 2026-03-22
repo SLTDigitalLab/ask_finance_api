@@ -28,6 +28,8 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useDispatch, useSelector } from "react-redux";
 import { useLocation } from "react-router-dom";
+import bigCleaningImg from "../assets/big-cleaning.png"
+
 
 const MotionFlex = motion(Flex);
 const MotionButton = motion(Button);
@@ -45,6 +47,7 @@ function NavBar() {
   const { isLoggedIn, userObj } = useSelector((state) => state.user);
   const dispatch = useDispatch();
   const { domain } = useParams();
+  
 
   const { colorMode, toggleColorMode } = useColorMode();
 
@@ -105,7 +108,7 @@ function NavBar() {
         textAlign="center"
         pointerEvents="none" // keep behind-clicks working
       >
-        <Heading
+        {/* <Heading
           as="h2"
           // responsive size: sm → xl, md → 2xl, lg+ → 3xl
           fontSize={{ base: "xl", md: "2xl", lg: "3xl" }}
@@ -126,7 +129,40 @@ function NavBar() {
           }}
         >
           {displayName}
-        </Heading>
+        </Heading> */}
+        <Flex align="center" justify="center" gap={3}>
+
+          <Heading
+            as="h2"
+            fontSize={{ base: "xl", md: "2xl", lg: "3xl" }}
+            fontWeight="extrabold"
+            letterSpacing="wider"
+            lineHeight="1.1"
+            bgGradient={useColorModeValue(
+              "linear(to-r, teal.500, blue.500)",
+              "linear(to-r, teal.200, blue.300)"
+            )}
+            bgClip="text"
+            sx={{
+              textShadow: useColorModeValue(
+                "0 0 10px rgba(56,178,172,0.35), 0 0 18px rgba(66,153,225,0.25)",
+                "0 0 10px rgba(129,230,217,0.45), 0 0 18px rgba(144,205,244,0.35)"
+              ),
+            }}
+          >
+            {displayName}
+          </Heading>
+
+          {domain === "big_cleaning_day" && (
+            <Image
+              src={bigCleaningImg}
+              h={{ base: "35px", md: "50px", lg: "60px" }}
+              objectFit="contain"
+            />
+          )}
+
+        </Flex>
+        
 
         {/* Accent underline */}
         <Box
