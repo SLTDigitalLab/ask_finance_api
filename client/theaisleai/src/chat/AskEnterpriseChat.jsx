@@ -3,7 +3,7 @@ import EmbryoLogo from "../assets/embryo-removebg.png";
 import AIBot from "../assets/ai-bot.png";
 
 const COPILOT_URL =
-  "https://copilotstudio.microsoft.com/environments/Default-534253fc-dfb6-462f-b5ca-cbe81939f5ee/bots/crad5_agent2/webchat?__version__=2&enableFileAttachment=true";
+  "https://copilotstudio.microsoft.com/environments/Default-534253fc-dfb6-462f-b5ca-cbe81939f5ee/bots/copilots_header_7e9ca/webchat?__version__=2&enableFileAttachment=true";
 
 export default function AskEnterpriseChat() {
   return (
@@ -11,23 +11,11 @@ export default function AskEnterpriseChat() {
       {/* ✅ Embedded CSS */}
       <style>{`
         .enterprise-page {
-          min-height: 100vh;
+          min-height: 100svh;
           display: flex;
           flex-direction: column;
           color: white;
-          background:
-            radial-gradient(ellipse at top left, rgba(59,130,246,0.25) 0%, transparent 50%),
-            radial-gradient(ellipse at top right, rgba(37,99,235,0.35) 0%, transparent 50%),
-            radial-gradient(ellipse at bottom left, rgba(14,165,233,0.22) 0%, transparent 50%),
-            radial-gradient(ellipse at bottom right, rgba(30,64,175,0.45) 0%, transparent 50%),
-            linear-gradient(
-              135deg,
-              #0b1b3a 0%,
-              #0a2a66 15%,
-              #0b3aa5 35%,
-              #06224d 60%,
-              #031227 100%
-            );
+          
         }
 
         .enterprise-container {
@@ -64,7 +52,7 @@ export default function AskEnterpriseChat() {
           margin-top: 22px;
           background: rgba(255,255,255,0.95);
           border-radius: 20px;
-          height: 560px;
+          height:min(560px, 72vh);
           overflow: hidden;
           box-shadow:
             0 32px 90px rgba(0,0,0,0.45),
@@ -125,6 +113,39 @@ export default function AskEnterpriseChat() {
           width: auto;
           opacity: 0.95;
         }
+         
+        @media (max-width: 768px){
+
+          .enterprise-header{
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+          }
+
+          .enterprise-bot{
+            position:static;      /* remove absolute positioning */
+            margin-top:10px;
+            height:70px;
+            left:auto;
+            top:auto;
+          }
+
+        }
+         
+        body{
+          margin:0;
+          min-height:100vh;
+
+          background:
+            radial-gradient(circle at 10% 10%, rgba(59,130,246,.25), transparent 40%),
+            radial-gradient(circle at 90% 20%, rgba(37,99,235,.35), transparent 40%),
+            radial-gradient(circle at 20% 90%, rgba(14,165,233,.22), transparent 40%),
+            linear-gradient(135deg,#0b1b3a,#0a2a66,#0b3aa5,#06224d,#031227);
+
+          background-attachment:fixed;
+        }
+
+        
       `}</style>
 
       {/* ✅ Page */}
