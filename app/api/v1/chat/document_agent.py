@@ -37,6 +37,7 @@ from google.genai import types
 
 
 
+
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
 GEMINI_OCR_URL = "https://api.gemini.ai/v1/vision/ocr"  
@@ -48,8 +49,14 @@ load_dotenv()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
-os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+if TAVILY_API_KEY:
+    os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
+
+if GOOGLE_API_KEY:
+    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+
+
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -146,7 +153,9 @@ async def gemini_ocr(file_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     If mime_type is not provided, defaults to 'image/jpeg'.
     """
     try:
-        client = genai.Client()
+        #client = genai.Client()
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
 
         # Run synchronous Gemini client in thread executor
         loop = asyncio.get_event_loop()
@@ -756,10 +765,10 @@ async def add_data_to_collection(
             return result
 
     except Exception as e:
-        logger.error(f"Error processing links for domain '{request.domain}': {e}")
-        result["status"] = "failed"
-        result["message"] = str(e)
-        return result
+        logger.error(f"Error processing links for domain '{request.domain}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @router.post("/add_hr_kb", tags=["Vectorstore"])
 async def add_hr_kb_to_collection(
@@ -811,12 +820,13 @@ async def add_hr_kb_to_collection(
         result["status"] = "success"
         result["message"] = f"Inserted {len(all_chunks)} chunks from {len(docs)} OneDrive docs to domain '{request.domain}'"
         return result
-
+    
+    
     except Exception as e:
-        logger.error(f"Error processing OneDrive folder for domain '{request.domain}': {e}")
-        result["status"] = "failed"
-        result["message"] = str(e)
-        return result
+        logger.error(f"Error processing OneDrive folder for domain '{request.domain}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @router.get("/chunks/{domain}", tags=["Vectorstore"])
 async def list_domain_chunks(
@@ -825,6 +835,19 @@ async def list_domain_chunks(
 ):
     """Get all chunks in a specific domain."""
     try:
+        raw_domain = domain
+        domain = (domain or "").strip().lower()
+
+        # Keep consistent with base.py
+        DOMAIN_ALIASES = {
+            "ask_fiannce": "ask_finance",
+            "ask_fianance": "ask_finance",
+        }
+        domain = DOMAIN_ALIASES.get(domain, domain)
+
+        if raw_domain != domain:
+            logger.warning(f"[CHUNKS] Domain normalized: '{raw_domain}' -> '{domain}'")
+
         chunks = get_all_points(domain=domain)
         return {
             "domain": domain,
@@ -834,6 +857,7 @@ async def list_domain_chunks(
     except Exception as e:
         logger.error(f"Error listing chunks for domain '{domain}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 def document_search_agent(state: Dict[str, Any]) -> Dict[str, Any]:

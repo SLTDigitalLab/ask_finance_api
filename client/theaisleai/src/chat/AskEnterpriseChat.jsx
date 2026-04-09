@@ -1,0 +1,185 @@
+import React from "react";
+import EmbryoLogo from "../assets/embryo-removebg.png";
+import AIBot from "../assets/ai-bot.png";
+
+const COPILOT_URL =
+  "https://copilotstudio.microsoft.com/environments/Default-534253fc-dfb6-462f-b5ca-cbe81939f5ee/bots/copilots_header_7e9ca/webchat?__version__=2&enableFileAttachment=true";
+
+export default function AskEnterpriseChat() {
+  return (
+    <>
+      {/* ✅ Embedded CSS */}
+      <style>{`
+        .enterprise-page {
+          min-height: 100svh;
+          display: flex;
+          flex-direction: column;
+          color: white;
+          
+        }
+
+        .enterprise-container {
+          flex: 1;
+          max-width: 1200px;
+          width: 100%;
+          margin: 0 auto;
+          padding: 28px 16px;
+          text-align: center;
+        }
+
+        /* ===== Pure white title ===== */
+        .enterprise-title {
+          margin: 0;
+          font-size: 52px;
+          font-weight: 900;
+          letter-spacing: 0.04em;
+          color: #ffffff;
+          text-shadow:
+            0 3px 14px rgba(0,0,0,0.35),
+            0 1px 2px rgba(0,0,0,0.4);
+        }
+
+        .enterprise-subtitle {
+          margin-top: 6px;
+          font-size: 14px;
+          font-weight: 500;
+          letter-spacing: 0.25em;
+          
+          color: rgba(255,255,255,0.75);
+        }
+
+        .enterprise-card {
+          margin-top: 22px;
+          background: rgba(255,255,255,0.95);
+          border-radius: 20px;
+          height:min(560px, 72vh);
+          overflow: hidden;
+          box-shadow:
+            0 32px 90px rgba(0,0,0,0.45),
+            0 0 0 1px rgba(255,255,255,0.35) inset;
+        }
+
+        .enterprise-iframe {
+          width: 100%;
+          height: 100%;
+          border: none;
+        }
+
+        /* ===== Footer ~20% bigger ===== */
+        .enterprise-footer {
+          padding: 14px 0; /* was 12px */
+          background: rgba(0,0,0,0.25);
+          border-top: 1px solid rgba(255,255,255,0.12);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 12px; /* was 10px */
+          opacity: 0.9;
+        }
+
+        .enterprise-footer-text {
+          font-size: 14px; /* was 12px */
+          letter-spacing: 1px;
+          text-transform: uppercase;
+        }
+
+         .enterprise-header{
+          position:relative;
+          text-align:center;
+          margin-bottom:10px;
+
+        }
+
+        .enterprise-bot{
+
+          position:absolute;
+          left: calc(50% + 120px);
+          top:-10px;
+          height:95px;
+          width:auto;
+          filter: drop-shadow(0 8px 20px rgba(0,0,0,0.4));
+          animation: floatBot 4s ease-in-out infinite;
+        }
+        }
+
+        @keyframes floatBot{
+          0%{ transform: translateY(0px);}
+          50%{ transform: translateY(-6px);}
+          100%{ transform: translateY(0px);}
+        }
+
+        .enterprise-footer-logo {
+          height: 38px; /* was 32px */
+          width: auto;
+          opacity: 0.95;
+        }
+         
+        @media (max-width: 768px){
+
+          .enterprise-header{
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+          }
+
+          .enterprise-bot{
+            position:static;      /* remove absolute positioning */
+            margin-top:10px;
+            height:70px;
+            left:auto;
+            top:auto;
+          }
+
+        }
+         
+        body{
+          margin:0;
+          min-height:100vh;
+
+          background:
+            radial-gradient(circle at 10% 10%, rgba(59,130,246,.25), transparent 40%),
+            radial-gradient(circle at 90% 20%, rgba(37,99,235,.35), transparent 40%),
+            radial-gradient(circle at 20% 90%, rgba(14,165,233,.22), transparent 40%),
+            linear-gradient(135deg,#0b1b3a,#0a2a66,#0b3aa5,#06224d,#031227);
+
+          background-attachment:fixed;
+        }
+
+        
+      `}</style>
+
+      {/* ✅ Page */}
+      <div className="enterprise-page">
+        <div className="enterprise-container">
+          <div className="enterprise-header">
+            <div>
+              <h1 className="enterprise-title">Ai e</h1>
+              <div className="enterprise-subtitle">By SLTMobitel Enterprise</div>
+            </div>
+
+            <img src={AIBot} alt="AI Bot" className="enterprise-bot" />
+          </div>
+
+          <div className="enterprise-card">
+            <iframe
+              title="AIye Copilot"
+              src={COPILOT_URL}
+              className="enterprise-iframe"
+              allow="microphone; camera"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="enterprise-footer">
+          <span className="enterprise-footer-text">Powered By</span>
+          <img
+            src={EmbryoLogo}
+            alt="THEEMBRYO"
+            className="enterprise-footer-logo"
+          />
+        </div>
+      </div>
+    </>
+  );
+}

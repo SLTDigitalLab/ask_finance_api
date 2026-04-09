@@ -35,6 +35,8 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    env_file:
+      - .env  
     depends_on:
       - db
       - migrations
@@ -54,6 +56,16 @@ services:
       DB_USER: postgres
       DB_PASSWORD: postgres
       DB_NAME: postgres
+    networks:
+      - net
+
+  #copilot service
+  copilot:
+    build: ./copilot_backend
+    container_name: askfinance-copilot
+    restart: always
+    ports:
+      - "5003:5003"  
     networks:
       - net
 

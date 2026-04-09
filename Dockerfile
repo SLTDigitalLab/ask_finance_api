@@ -58,10 +58,18 @@ RUN unzip $CHROMEDRIVER_DIR/chromedriver* -d $CHROMEDRIVER_DIR
 # Put Chromedriver into the PATH
 ENV PATH $CHROMEDRIVER_DIR:$PATH
 
-RUN pip install langchain-tavily
-RUN pip install --upgrade pip
+#RUN pip install langchain-tavily
+
+# Upgrade pip and install build tools first
+RUN pip install --upgrade pip setuptools wheel
+
+# Install all Python dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt -v
-RUN python -m spacy download en_core_web_sm 
+
+# Download spacy model
+RUN python -m spacy download en_core_web_sm
+
 
 # --no-cache-dir 
 # OK, now we pip install our requirements
@@ -70,14 +78,18 @@ EXPOSE 8000
 
 # Instruction informs Docker that the container listens on port 80
 
-WORKDIR /build/app
+#WORKDIR /build
 
 # Now we just want to our WORKDIR to be /build/app for simplicity
 # We could skip this part and then type
 # python -m uvicorn main.app:app ... below
 
 # CMD gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 3600  --graceful-timeout 3600
-CMD python -m uvicorn main:app --host 0.0.0.0 --port 8000
+#CMD python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+WORKDIR /build
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
 
 # This command runs our uvicorn server
 # See Troubleshoots to understand why we need to type in --host 0.0.0.0 and --port 80
