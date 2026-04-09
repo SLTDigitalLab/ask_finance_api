@@ -10,6 +10,7 @@ import ChatIframe from "./chat/ChatIframe.jsx";
 import Layout from "./layouts/Layout.jsx";
 import CopilotChatInterface from "./chat/CopilotChatInterface.jsx";
 import AskEnterpriseChat from "./chat/AskEnterpriseChat";
+import WorkMateChat from "./chat/WorkMateChat";
 
 
 function DomainChatRouter() {
@@ -33,6 +34,8 @@ function DomainChatRouter() {
     "backoffice_email",
     "big_cleaning_day",
     // "ask_procurement",
+    "ask_aura",
+
   ]);
 
   //console.log("DomainChatRouter:", d, "copilot?", COPILOT_DOMAINS.has(d));
@@ -79,8 +82,9 @@ function App() {
     <BrowserRouter>
       <Routes>
         
-        <Route path="/" element={<Navigate to="/ask_finance/chat" replace />} />
+        <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path="/ask_enterprise/chat" element={<AskEnterpriseChat />} />
+        <Route path="/chat" element={<WorkMateChat />} />
         <Route path=":domain" element={<Layout />}>
           <Route path="chat" element={<DomainChatRouter />} />
           <Route path="iframe" element={<ChatIframe />} />
